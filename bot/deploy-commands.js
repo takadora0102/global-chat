@@ -1,4 +1,3 @@
-// deploy-commands.js
 import 'dotenv/config';
 import { REST, Routes } from 'discord.js';
 import { data as globalCommand } from './commands/global.js';
@@ -8,13 +7,13 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
 (async () => {
   try {
-    console.log('Refreshing commands globally…');
+    console.log('Refreshing global slash commands…');
     await rest.put(
-      Routes.applicationCommands(process.env.CLIENT_ID),
+      Routes.applicationCommands(process.env.CLIENT_ID),  // ← グローバル登録
       { body: commands }
     );
-    console.log('Commands reloaded.');
+    console.log('✔️ Global commands reloaded.');
   } catch (err) {
-    console.error(err);
+    console.error('❌ Failed to reload commands:', err);
   }
 })();
