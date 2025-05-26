@@ -1,3 +1,12 @@
+/**
+ * Discord Bot – Global-Chat & Translation
+ * ---------------------------------------
+ * - メンション排除・Embed 形式で表示
+ * - 同じギルドには再送しない
+ * - 返信 (`message.reference`) に対応
+ * - 国旗リアクション翻訳（アジア & ヨーロッパ主要言語）
+ */
+
 import 'dotenv/config';
 import express from 'express';
 import bodyParser from 'body-parser';
@@ -13,7 +22,8 @@ import {
 /* ---------- 翻訳ヘルパ ---------- */
 async function translate(text, target) {
   const url =
-    'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto' +
+    'https://translate.googleapis.com/translate_a/single' +
+    '?client=gtx&sl=auto' +
     `&tl=${target}&dt=t&q=${encodeURIComponent(text)}`;
 
   const res = await fetch(url);
@@ -43,8 +53,8 @@ export const data = new SlashCommandBuilder()
     sub
       .setName('join')
       .setDescription('このチャンネルをグローバルチャットに参加させる')
-      .addChannelOption(opt =>
-        opt.setName('channel').setDescription('参加チャンネル').setRequired(true)
+      .addChannelOption(o =>
+        o.setName('channel').setDescription('参加チャンネル').setRequired(true)
       )
   )
   .addSubcommand(sub =>
@@ -53,29 +63,30 @@ export const data = new SlashCommandBuilder()
 
 /* ---------- Slash Command ハンドラ ---------- */
 client.on(Events.InteractionCreate, async i => {
-  if (!i.isChatInputCommand()) return;
-  if (i.commandName !== 'global') return;
+  if (!i.isChatInputCommand() || i.commandName !== 'global') return;
 
   const sub = i.options.getSubcommand();
   const channel = i.options.getChannel('channel') || i.channel;
-
-  const payload = { guildId: i.guildId, channelId: channel.id };
   const path = sub === 'join' ? 'join' : 'leave';
 
-  await fetch(`${HUB}/global/${path}`, {
+  const resp = await fetch(`${HUB}/global/${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
+    body: JSON.stringify({ guildId: i.guildId, channelId: channel.id })
+  }).then(r => r.json());
 
-  await i.reply(
-    sub === 'join'
-      ? 'このチャンネルをグローバルチャットに登録しました！'
-      : 'このチャンネルをグローバルチャットから解除しました！'
-  );
+  if (resp.status === 'already') {
+    await i.reply('⚠️ 既に登録済みです。');
+  } else {
+    await i.reply(
+      sub === 'join'
+        ? '✅ 登録しました！'
+        : '✅ 解除しました！'
+    );
+  }
 });
 
-/* ---------- メッセージ → Hub ---------- */
+/* ---------- メッセージを Hub へ ---------- */
 client.on(Events.MessageCreate, async msg => {
   if (msg.author.bot) return;
 
@@ -95,7 +106,7 @@ client.on(Events.MessageCreate, async msg => {
   });
 });
 
-/* ---------- Relay 受信 ---------- */
+/* ---------- Hub からの中継を受信 ---------- */
 const app = express();
 app.use(bodyParser.json());
 
@@ -111,11 +122,18 @@ app.post('/relay', async (req, res) => {
   } = req.body;
 
   try {
-    const channel = await client.guilds.cache
-      .get(toGuild)
-      .channels.fetch(toChannel);
+    // ギルド取得
+    let guild = client.guilds.cache.get(toGuild);
+    if (!guild) guild = await client.guilds.fetch(toGuild).catch(() => null);
+    if (!guild) return res.sendStatus(404);
 
-    // メンション防止・Embed 形式
+    // チャンネル取得
+    let channel = guild.channels.cache.get(toChannel);
+    if (!channel)
+      channel = await guild.channels.fetch(toChannel).catch(() => null);
+    if (!channel || !channel.isTextBased()) return res.sendStatus(404);
+
+    // Embed 生成
     const embed = {
       author: { name: `${userTag} @ ${originGuild}`, icon_url: userAvatar },
       description: content,
@@ -137,30 +155,16 @@ app.post('/relay', async (req, res) => {
 /* ---------- 国旗リアクション翻訳 ---------- */
 const FLAG_TO_LANG = {
   // 既存
-  '🇯🇵': 'ja',
-  '🇺🇸': 'en',
-  '🇬🇧': 'en',
+  '🇯🇵': 'ja', '🇺🇸': 'en', '🇬🇧': 'en',
   // アジア
-  '🇨🇳': 'zh',
-  '🇹🇼': 'zh',
-  '🇰🇷': 'ko',
-  '🇮🇳': 'hi',
-  '🇹🇭': 'th',
-  '🇻🇳': 'vi',
-  '🇮🇩': 'id',
-  '🇵🇭': 'tl',
-  '🇹🇷': 'tr',
+  '🇨🇳': 'zh', '🇹🇼': 'zh', '🇰🇷': 'ko',
+  '🇮🇳': 'hi', '🇹🇭': 'th', '🇻🇳': 'vi',
+  '🇮🇩': 'id', '🇵🇭': 'tl', '🇹🇷': 'tr',
   '🇸🇦': 'ar',
   // ヨーロッパ
-  '🇪🇸': 'es',
-  '🇫🇷': 'fr',
-  '🇵🇹': 'pt',
-  '🇮🇹': 'it',
-  '🇩🇪': 'de',
-  '🇷🇺': 'ru',
-  '🇳🇱': 'nl',
-  '🇵🇱': 'pl',
-  '🇸🇪': 'sv'
+  '🇪🇸': 'es', '🇫🇷': 'fr', '🇵🇹': 'pt',
+  '🇮🇹': 'it', '🇩🇪': 'de', '🇷🇺': 'ru',
+  '🇳🇱': 'nl', '🇵🇱': 'pl', '🇸🇪': 'sv'
 };
 
 client.on(Events.MessageReactionAdd, async (reaction, user) => {

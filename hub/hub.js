@@ -1,3 +1,12 @@
+/**
+ * Hub – Message Relay API
+ * -----------------------
+ * - Redis に登録済みチャンネルを保持
+ * - 同じギルド宛はスキップ
+ * - メンション付きメッセージはブロック
+ * - 重複登録を判定
+ */
+
 import express from 'express';
 import bodyParser from 'body-parser';
 import fetch from 'node-fetch';
@@ -6,7 +15,6 @@ import { Redis } from '@upstash/redis';
 const app = express();
 app.use(bodyParser.json());
 
-// Upstash Redis
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN
@@ -14,13 +22,21 @@ const redis = new Redis({
 
 /* ---------- Join / Leave ---------- */
 app.post('/global/join', async (req, res) => {
-  await redis.sadd('global:channels', JSON.stringify(req.body));
+  const key = JSON.stringify(req.body);
+  const exists = await redis.sismember('global:channels', key);
+
+  if (exists) {
+    console.log('🔄 Already joined', req.body);
+    return res.send({ status: 'already' });
+  }
+  await redis.sadd('global:channels', key);
   console.log('🟢 Joined', req.body);
   res.send({ status: 'joined' });
 });
 
 app.post('/global/leave', async (req, res) => {
-  await redis.srem('global:channels', JSON.stringify(req.body));
+  const key = JSON.stringify(req.body);
+  await redis.srem('global:channels', key);
   console.log('🔴 Left', req.body);
   res.send({ status: 'left' });
 });
@@ -35,11 +51,11 @@ app.post('/publish', async (req, res) => {
     return res.send({ status: 'blocked' });
   }
 
-  const set = await redis.smembers('global:channels');
+  const entries = await redis.smembers('global:channels');
 
-  for (const entry of set) {
+  for (const entry of entries) {
     const parsed =
-      typeof entry === 'string' && entry.startsWith('{')
+      typeof entry === 'string' && entry.trim().startsWith('{')
         ? JSON.parse(entry)
         : entry;
 
@@ -52,7 +68,10 @@ app.post('/publish', async (req, res) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...msg, ...parsed })
       });
-      console.log(`➡️ Relay to ${parsed.guildId}/${parsed.channelId}:`, r.status);
+      console.log(
+        `➡️ Relayed to ${parsed.guildId}/${parsed.channelId}:`,
+        r.status
+      );
     } catch (err) {
       console.error('Relay error:', err.message);
     }
