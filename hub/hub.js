@@ -1,10 +1,13 @@
 /**
- * hub/hub.js
- * -----------------
- * - Redis に登録チャンネルを保持
- * - join/leave で重複チェック
- * - publish でメンション付きメッセージをブロック
- * - publish から Bot へ relay する際は toGuild / toChannel を渡す
+ * hub/hub.js  ―  Global-Chat Relay API
+ *
+ * 1. /global/join   : チャンネル登録（重複チェック）
+ * 2. /global/leave  : チャンネル解除
+ * 3. /publish       : 登録チャンネルへ中継
+ *      - 同一ギルド宛はスキップ
+ *      - @everyone / @here / @ユーザー を含む場合はブロック
+ *      - Bot へ送るキー名は { toGuild , toChannel }
+ * 4. /healthz       : keep-alive 用
  */
 
 import express from 'express';
@@ -17,13 +20,13 @@ app.use(bodyParser.json());
 
 /* ---------- Upstash Redis ---------- */
 const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL,
+  url:   process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN
 });
 
 /* ---------- チャンネル登録 ---------- */
 app.post('/global/join', async (req, res) => {
-  const key = JSON.stringify(req.body);      // { guildId, channelId }
+  const key = JSON.stringify(req.body);               // { guildId, channelId }
   const exists = await redis.sismember('global:channels', key);
 
   if (exists) {
@@ -45,44 +48,37 @@ app.post('/global/leave', async (req, res) => {
 
 /* ---------- メッセージ中継 ---------- */
 app.post('/publish', async (req, res) => {
-  const msg = req.body;  // { guildId, channelId, userId, userTag, userAvatar, originGuild, content, replyTo }
+  const msg = req.body;   // { guildId, channelId, content, ... }
 
-  /* メンション付き or everyone/here をブロック */
+  /* メンション系はブロック */
   if (/(?:@everyone|@here|<@!?\\d+>)/.test(msg.content)) {
     console.log('🔒 Mention blocked:', msg.content);
     return res.send({ status: 'blocked' });
   }
 
-  /* 登録チャンネルを取得 */
-  const entries = await redis.smembers('global:channels');
+  /* 登録チャンネル一覧 */
+  const list = await redis.smembers('global:channels');
 
-  for (const entry of entries) {
-    const parsed =
-      typeof entry === 'string' && entry.trim().startsWith('{')
-        ? JSON.parse(entry)        // { guildId, channelId }
-        : entry;
+  for (const entry of list) {
+    const { guildId, channelId } =
+      typeof entry === 'string' ? JSON.parse(entry) : entry;
 
     /* 同じギルドには送らない */
-    if (parsed.guildId === msg.guildId) continue;
+    if (guildId === msg.guildId) continue;
 
     try {
-      /* Bot の /relay へ中継。キー名を toGuild / toChannel にそろえる！ */
       const r = await fetch(`${process.env.BOT_ENDPOINT}/relay`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...msg,
-          toGuild:   parsed.guildId,
-          toChannel: parsed.channelId
+          toGuild:   guildId,
+          toChannel: channelId
         })
       });
-
-      console.log(
-        `➡️ Relayed to ${parsed.guildId}/${parsed.channelId}:`,
-        r.status
-      );
+      console.log(`➡️ Relayed to ${guildId}/${channelId}:`, r.status);
     } catch (err) {
-      console.error('Relay error:', err.message);
+      console.error('Relay error →', guildId, channelId, err.message);
     }
   }
 
