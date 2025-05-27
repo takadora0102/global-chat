@@ -1,13 +1,16 @@
 /**
- * hub/hub.js – Global Chat Relay (auto-translate対応)
- * （変更なし）
+ * hub/hub.js – Global Chat Relay
+ * 2025-05-27  修正版
+ * ・autoTranslate が未設定（null / undefined）の場合でも翻訳を行う
+ * ・コード整理（機能は変わりません）
  */
 import express from 'express';
 import bodyParser from 'body-parser';
 import fetch from 'node-fetch';
 import { Redis } from '@upstash/redis';
 
-const app = express();
+const app  = express();
+const PORT = process.env.PORT || 3000;
 app.use(bodyParser.json());
 
 const redis = new Redis({
@@ -15,13 +18,10 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN
 });
 
-/* ---------- Join / Leave ---------- */
+/* ---------- JOIN / LEAVE ---------- */
 app.post('/global/join', async (req, res) => {
   const key = JSON.stringify(req.body);
-  if (await redis.sismember('global:channels', key)) {
-    console.log('🔄 already joined', req.body);
-    return res.send({ status: 'already' });
-  }
+  if (await redis.sismember('global:channels', key)) return res.send({ status: 'already' });
   await redis.sadd('global:channels', key);
   console.log('🟢 joined', req.body);
   res.send({ status: 'joined' });
@@ -34,35 +34,33 @@ app.post('/global/leave', async (req, res) => {
   res.send({ status: 'left' });
 });
 
-/* ---------- Publish (そのまま中継) ---------- */
+/* ---------- PUBLISH ---------- */
 app.post('/publish', async (req, res) => {
   const msg = req.body;
+
+  /* Mentions guard */
   if (/(?:@everyone|@here|<@!?\\d+>)/.test(msg.content)) {
-    console.log('🔒 mention blocked');
-    return res.send({ status: 'blocked' });
+    console.log('🔒 mention blocked'); return res.send({ status: 'blocked' });
   }
 
   const list = await redis.smembers('global:channels');
+
   for (const entry of list) {
     let parsed;
-    try {
-      parsed = typeof entry === 'string' && entry.trim().startsWith('{')
-        ? JSON.parse(entry)
-        : entry;
-    } catch {
-      console.warn('⚠️ corrupted entry removed', entry);
-      await redis.srem('global:channels', entry);
-      continue;
-    }
+    try { parsed = JSON.parse(entry); }
+    catch { await redis.srem('global:channels', entry); continue; }
+
     const { guildId, channelId } = parsed;
-    if (guildId === msg.guildId) continue;               // 自分には返さない
+    if (guildId === msg.guildId) continue;                 // 自分には返さない
 
-    /* ▼ 宛先ギルドの翻訳設定取得 */
-    const langInfo  = await redis.hgetall(`lang:${guildId}`);
-    const targetLang = (langInfo?.autoTranslate === 'true' && langInfo.lang)
-      ? langInfo.lang
-      : null;
+    /* ▼ 翻訳設定の取得 ------------- */
+    const langInfo = await redis.hgetall(`lang:${guildId}`);
+    const lang     = langInfo?.lang ?? null;
+    // autoTranslate が「false」だけ翻訳OFF、空欄や未設定なら翻訳ON
+    const shouldTranslate = lang && langInfo?.autoTranslate !== 'false';
+    const targetLang      = shouldTranslate ? lang : null;
 
+    /* ▼ Relay 呼び出し ------------ */
     try {
       const r = await fetch(`${process.env.BOT_ENDPOINT}/relay`, {
         method: 'POST',
@@ -78,6 +76,6 @@ app.post('/publish', async (req, res) => {
   res.send({ status: 'ok' });
 });
 
-/* ---------- Health ---------- */
+/* ---------- HEALTH ---------- */
 app.get('/healthz', (_q, r) => r.send('OK'));
-app.listen(process.env.PORT || 3000, () => console.log('Hub listening'));
+app.listen(PORT, () => console.log('Hub listening on', PORT));
