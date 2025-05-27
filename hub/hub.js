@@ -1,5 +1,5 @@
 /**
- * hub/hub.js – Global Chat Relay (2025-05-27 Logging Added)
+ * hub/hub.js – Global Chat Relay (2025-05-28 Fix for corrupted entries)
  */
 
 import express from 'express';
@@ -46,23 +46,33 @@ app.post('/publish', async (req, res) => {
   const list = await redis.smembers('global:channels');
   for (const entry of list) {
     let parsed;
-    try {
-      parsed = JSON.parse(entry);
-    } catch {
-      console.warn('⚠️ corrupted entry removed', entry);
+    // 【修正ポイント】entry が文字列かオブジェクトか判定
+    if (typeof entry === 'string') {
+      try {
+        parsed = JSON.parse(entry);
+      } catch {
+        console.warn('⚠️ corrupted entry removed', entry);
+        await redis.srem('global:channels', entry);
+        continue;
+      }
+    } else if (typeof entry === 'object' && entry.guildId && entry.channelId) {
+      parsed = entry;
+    } else {
+      console.warn('⚠️ invalid entry removed', entry);
       await redis.srem('global:channels', entry);
       continue;
     }
+
     const { guildId, channelId } = parsed;
     if (guildId === msg.guildId) continue; // 自分には返さない
 
-    // 翻訳設定の取得
+    // 翻訳設定取得
     const langInfo = await redis.hgetall(`lang:${guildId}`);
     const lang     = langInfo?.lang ?? null;
     const shouldTranslate = lang && langInfo?.autoTranslate !== 'false';
     const targetLang      = shouldTranslate ? lang : null;
 
-    // ログ追加：Relay 宛先とペイロード概要
+    // ログ：Relay 宛先と targetLang
     console.log('🔄 sending to relay →', guildId, channelId, 'targetLang:', targetLang);
 
     try {
@@ -71,7 +81,8 @@ app.post('/publish', async (req, res) => {
         headers: { 'Content-Type': 'application/json' },
         body:   JSON.stringify({ ...msg, toGuild: guildId, toChannel: channelId, targetLang })
       });
-      // ログ追加：Relay レスポンスステータス
+
+      // ログ：Relay レスポンス
       console.log('➡️ relay response', guildId, channelId, r.status);
 
       const js = await r.json().catch(() => ({}));
