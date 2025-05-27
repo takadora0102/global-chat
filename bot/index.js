@@ -1,11 +1,13 @@
 /**
- * bot/index.js – Global Chat Bot (2025-05-27 Cleanup & Logging Fix)
+ * bot/index.js – Global Chat Bot
+ * 2025-05-27 Cleanup & Logging Fix
  * ------------------------------------------------------------
+ * 主な機能
  * • Owner-only /announce
- * • 自動翻訳＋時差タグ＋都市名＆国旗付きラベル
- * • 🌏 自動タイムゾーン判定ボタン
+ * • 自動翻訳＋時差タグ（都市名・国旗付きラベル）
+ * • 🌏 タイムゾーン自動判定ボタン
  * • Unknown Channel 自動削除ロジックを一時無効化
- * • /relay ハンドラに詳細ログ追加
+ * • Hub→Bot→Relay フローに詳細ログ追加
  * • publish にログ追加
  * • Relay サーバー起動ログ追加
  */
@@ -99,6 +101,7 @@ async function translate(text, target) {
   const data = await res.json();
   return data[0].map(v => v[0]).join('');
 }
+/* 国旗リアクション → 言語コード */
 const FLAG_TO_LANG = {
   '🇯🇵':'ja','🇺🇸':'en','🇬🇧':'en','🇨🇳':'zh','🇹🇼':'zh','🇰🇷':'ko',
   '🇮🇳':'hi','🇹🇭':'th','🇻🇳':'vi','🇮🇩':'id','🇵🇭':'tl','🇹🇷':'tr',
@@ -125,14 +128,14 @@ export const cmdAnnounce = new SlashCommandBuilder()
  * /setup ハンドラ
  * ------------------------------------------------------------------ */
 async function handleSetup(i) {
-  const g        = i.guild;
+  const g = i.guild;
   const everyone = g.roles.everyone;
 
-  /* カテゴリ */
+  // カテゴリ作成
   const cat = g.channels.cache.find(c => c.name === 'グローバルチャット' && c.type === 4)
            || await g.channels.create({ name: 'グローバルチャット', type: 4 });
 
-  /* bot-お知らせ */
+  // bot-お知らせ
   const botNotice = cat.children.cache.find(c => c.name === 'bot-お知らせ')
            || await g.channels.create({
                 name: 'bot-お知らせ',
@@ -143,7 +146,7 @@ async function handleSetup(i) {
                 ]
               });
 
-  /* 設定変更 */
+  // 設定変更
   const setting = cat.children.cache.find(c => c.name === '設定変更')
            || await g.channels.create({
                 name: '設定変更',
@@ -154,17 +157,11 @@ async function handleSetup(i) {
                 ]
               });
 
-  /* グローバルチャット */
-  const glChat = cat.children.cache.find(
-      c => c.name === 'グローバルチャット' && c.id !== cat.id
-    )
-    || await g.channels.create({
-         name: 'グローバルチャット',
-         type: 0,
-         parent: cat.id
-       });
+  // グローバルチャット
+  const glChat = cat.children.cache.find(c => c.name === 'グローバルチャット' && c.id !== cat.id)
+             || await g.channels.create({ name: 'グローバルチャット', type: 0, parent: cat.id });
 
-  /* Hub に登録 */
+  // Hub に登録
   await fetch(`${HUB}/global/join`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -173,7 +170,7 @@ async function handleSetup(i) {
   .then(r => console.log('join status', r.status))
   .catch(e => console.error('join fetch error', e));
 
-  /* 設定 UI */
+  // 設定 UI
   const rowLang = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId('lang_select')
@@ -186,16 +183,16 @@ async function handleSetup(i) {
         { label:'Español', value:'es' }
       ])
   );
-  const rowTz = new ActionRowBuilder().addComponents(
+  const rowTz     = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId('tz_select')
-      .setPlaceholder('サーバーの標準タイムゾーンを選択')
+      .setPlaceholder('サーバー標準タイムゾーンを選択')
       .addOptions(TZ_CHOICES)
   );
   const rowTzAuto = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('tz_auto').setLabel('🌏 自動判定').setStyle(ButtonStyle.Primary)
   );
-  const rowTrans = new ActionRowBuilder().addComponents(
+  const rowTrans  = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('tr_on').setLabel('翻訳ON').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('tr_off').setLabel('翻訳OFF').setStyle(ButtonStyle.Danger)
   );
@@ -220,11 +217,9 @@ async function handleAnnounce(i) {
     const { guildId } = JSON.parse(entry);
     try {
       const g  = await client.guilds.fetch(guildId);
-      const ch = g.channels.cache.find(
-        c => c.name === 'bot-お知らせ' && c.isTextBased()
-      );
+      const ch = g.channels.cache.find(c => c.name === 'bot-お知らせ' && c.isTextBased());
       if (ch) await ch.send(`📢 **運営からのお知らせ**\n${text}`);
-    } catch {/* ignore */}
+    } catch { /* ignore */ }
   }
   await i.reply({ content: '✅ 送信しました', flags: MessageFlags.Ephemeral });
 }
@@ -237,24 +232,20 @@ client.on(Events.InteractionCreate, async i => {
     if (i.commandName === 'setup')    return handleSetup(i);
     if (i.commandName === 'announce') return handleAnnounce(i);
   }
+
   if (i.isStringSelectMenu()) {
     if (i.customId === 'lang_select') {
       const lang = i.values[0];
       await rdb.hset(`lang:${i.guildId}`, { lang, autoTranslate: 'true' });
-      return i.reply({
-        content: `📌 言語を **${lang}** に設定しました（翻訳ON）`,
-        flags: MessageFlags.Ephemeral
-      });
+      return i.reply({ content: `📌 言語を **${lang}** に設定しました（翻訳ON）`, flags: MessageFlags.Ephemeral });
     }
     if (i.customId === 'tz_select') {
       const tz = i.values[0];
       await rdb.hset(`tz:${i.guildId}`, { tz });
-      return i.reply({
-        content: `🕒 タイムゾーンを **UTC${tz >= 0 ? '+' : ''}${tz}** に設定しました`,
-        flags: MessageFlags.Ephemeral
-      });
+      return i.reply({ content: `🕒 タイムゾーンを **UTC${tz >= 0 ? '+' : ''}${tz}** に設定しました`, flags: MessageFlags.Ephemeral });
     }
   }
+
   if (i.isButton()) {
     if (i.customId === 'tz_auto') {
       const guessed = guessOffsetByLocale(i.locale);
@@ -273,26 +264,15 @@ client.on(Events.InteractionCreate, async i => {
     if (i.customId.startsWith('tz_yes_')) {
       const tz = i.customId.replace('tz_yes_', '');
       await rdb.hset(`tz:${i.guildId}`, { tz });
-      return i.update({
-        content: `🕒 タイムゾーンを **UTC${tz >= 0 ? '+' : ''}${tz}** に設定しました`,
-        components: [],
-        flags: MessageFlags.Ephemeral
-      });
+      return i.update({ content: `🕒 タイムゾーンを **UTC${tz >= 0 ? '+' : ''}${tz}** に設定しました`, components: [], flags: MessageFlags.Ephemeral });
     }
     if (i.customId === 'tz_no') {
-      return i.update({
-        content: '⏹️ 設定をキャンセルしました。手動で選択してください。',
-        components: [],
-        flags: MessageFlags.Ephemeral
-      });
+      return i.update({ content: '⏹️ 設定をキャンセルしました。手動で選択してください。', components: [], flags: MessageFlags.Ephemeral });
     }
     if (i.customId === 'tr_on' || i.customId === 'tr_off') {
       const flag = i.customId === 'tr_on' ? 'true' : 'false';
       await rdb.hset(`lang:${i.guildId}`, { autoTranslate: flag });
-      return i.reply({
-        content: `🔄 自動翻訳を **${flag === 'true' ? 'ON' : 'OFF'}** にしました`,
-        flags: MessageFlags.Ephemeral
-      });
+      return i.reply({ content: `🔄 自動翻訳を **${flag === 'true' ? 'ON' : 'OFF'}** にしました`, flags: MessageFlags.Ephemeral });
     }
   }
 });
@@ -313,7 +293,7 @@ client.on(Events.MessageCreate, async msg => {
     try {
       const parent = await msg.channel.messages.fetch(msg.reference.messageId);
       replyContent = parent.content || parent.embeds?.[0]?.description || '(embed)';
-    } catch {/* ignore */ }
+    } catch { /* ignore */ }
   }
 
   fetch(`${HUB}/publish`, {
@@ -331,7 +311,7 @@ client.on(Events.MessageCreate, async msg => {
       replyTo:     msg.reference?.messageId ?? null,
       replyContent,
       sentAt:      Date.now(),
-      files:      msg.attachments.map(a => ({ url: a.url, name: a.name }))
+      files:       msg.attachments.map(a => ({ url: a.url, name: a.name }))
     })
   })
   .then(r => r.text().then(t => console.log('publish', r.status, t)))
@@ -346,6 +326,7 @@ api.use(bodyParser.json());
 
 api.post('/relay', async (req, res) => {
   console.log('relay req →', req.body);
+
   const {
     toGuild, toChannel,
     userTag, userAvatar, originGuild,
@@ -362,7 +343,7 @@ api.post('/relay', async (req, res) => {
       ch = await g.channels.fetch(toChannel);
     } catch (err) {
       console.error('Relay fetch channel error:', err.code, err.message);
-      if (err.code === 10003 /* Unknown Channel */) {
+      if (err.code === 10003) {  // Unknown Channel
         console.warn('🗑️ Unknown Channel detected for', toGuild, toChannel);
         // await rdb.srem('global:channels', JSON.stringify({ guildId: toGuild, channelId: toChannel }));
         return res.status(410).send({ status: 'unknown_channel' });
@@ -408,10 +389,10 @@ api.post('/relay', async (req, res) => {
     }
 
     const sent = await ch.send(opts);
-    return res.send({ status: 'relayed', messageId: sent.id });
+    res.send({ status: 'relayed', messageId: sent.id });
   } catch (err) {
     console.error('Relay error:', err.message);
-    return res.sendStatus(500);
+    res.sendStatus(500);
   }
 });
 
