@@ -1,1 +1,3 @@
+# bot/.gitignore
 node_modules/
+.env
