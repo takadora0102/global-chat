@@ -1,12 +1,13 @@
 /**
- * Discord Bot – Global Chat (2025-05-27 full)
- * ------------------------------------------
- * - /setup: カテゴリ+3ch 自動生成・権限設定・Hub登録・言語UI
- * - /announce: 運営一斉放送
- * - /global join/leave: 手動管理
- * - 画像中継・国旗リアクション翻訳
- * - 登録チャンネル限定送信
- * - クロスギルド返信時: 引用元本文を Embed に表示
+ * Discord Bot – Global Chat  (2025-05-27 auto-translate)
+ * ------------------------------------------------------
+ * • /setup  : カテゴリ+3chを自動生成・権限設定・Hub登録・言語UI
+ * • /announce : 運営ブロードキャスト
+ * • /global join/leave : 手動管理
+ * • 登録チャンネル限定でテキスト/画像を中継
+ * • 国旗リアクション翻訳
+ * • クロスギルド reply → 返信本文を Embed に表示
+ * • ⭐ new ⭐  宛先ギルド言語設定(lang+autoTranslate)に基づき自動翻訳
  */
 
 import 'dotenv/config';
@@ -23,7 +24,7 @@ import { Redis } from '@upstash/redis';
 import { LANG_CHOICES } from './constants.js';
 import { data as cmdGlobal } from './commands/global.js';
 
-/* ---------- Discord Client ---------- */
+/* ---------- 基本 ---------- */
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -36,13 +37,15 @@ const client = new Client({
 
 const HUB = process.env.HUB_ENDPOINT;
 const rdb = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL,
+  url:   process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN
 });
 
 /* ---------- 翻訳ヘルパ ---------- */
 async function translate(text, target) {
-  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${target}&dt=t&q=${encodeURIComponent(text)}`;
+  const url =
+    'https://translate.googleapis.com/translate_a/single?client=gtx' +
+    `&sl=auto&tl=${target}&dt=t&q=${encodeURIComponent(text)}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('translate ' + res.status);
   const data = await res.json();
@@ -68,63 +71,61 @@ export const cmdSetup = new SlashCommandBuilder()
 
 export const cmdAnnounce = new SlashCommandBuilder()
   .setName('announce')
-  .setDescription('全サーバーの #bot-お知らせ へ一斉送信 (運営専用)')
-  .addStringOption(o => o.setName('text').setDescription('本文').setRequired(true))
+  .setDescription('全サーバーの #bot-お知らせ へ一斉送信 (運営)')
+  .addStringOption(o =>
+    o.setName('text').setDescription('本文').setRequired(true)
+  )
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
-/* ---------- /setup 実装 ---------- */
+/* ---------- /setup ---------- */
 async function handleSetup(i){
-  const g = i.guild;
-  const everyone = g.roles.everyone;
+  const g=i.guild;
+  const everyone=g.roles.everyone;
 
-  // ▸ カテゴリ
-  const cat = g.channels.cache.find(c=>c.name==='グローバルチャット'&&c.type===4)
+  /* カテゴリ */
+  const cat=g.channels.cache.find(c=>c.name==='グローバルチャット'&&c.type===4)
         || await g.channels.create({ name:'グローバルチャット', type:4 });
 
-  // ▸ bot-お知らせ (送信禁止)
-  const botNotice = cat.children.cache.find(c=>c.name==='bot-お知らせ')
+  /* bot-お知らせ : 発言禁止 */
+  const botNotice=cat.children.cache.find(c=>c.name==='bot-お知らせ')
         || await g.channels.create({
-             name:'bot-お知らせ', type:0, parent:cat.id,
-             permissionOverwrites:[
-               { id: everyone.id, deny:[PermissionFlagsBits.SendMessages] }
-             ]
+             name:'bot-お知らせ',type:0,parent:cat.id,
+             permissionOverwrites:[{ id:everyone.id, deny:[PermissionFlagsBits.SendMessages] }]
            });
 
-  // ▸ 設定変更 (閲覧禁止)
-  const setting = cat.children.cache.find(c=>c.name==='設定変更')
+  /* 設定変更 : 管理者のみ閲覧 */
+  const setting=cat.children.cache.find(c=>c.name==='設定変更')
         || await g.channels.create({
-             name:'設定変更', type:0, parent:cat.id,
-             permissionOverwrites:[
-               { id: everyone.id, deny:[PermissionFlagsBits.ViewChannel] }
-             ]
+             name:'設定変更',type:0,parent:cat.id,
+             permissionOverwrites:[{ id:everyone.id, deny:[PermissionFlagsBits.ViewChannel] }]
            });
 
-  // ▸ グローバルチャット
-  const glChat = cat.children.cache.find(c=>c.name==='グローバルチャット'&&c.id!==cat.id)
+  /* グローバルチャット */
+  const glChat=cat.children.cache.find(c=>c.name==='グローバルチャット'&&c.id!==cat.id)
         || await g.channels.create({ name:'グローバルチャット', type:0, parent:cat.id });
 
-  // Hub 登録
+  /* Hub 登録 */
   await fetch(`${HUB}/global/join`,{
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ guildId:g.id, channelId:glChat.id })
   });
 
-  // 言語・翻訳 UI
-  const select = new StringSelectMenuBuilder()
+  /* 言語/翻訳 UI */
+  const select=new StringSelectMenuBuilder()
     .setCustomId('lang_select')
-    .setPlaceholder('言語を選択')
+    .setPlaceholder('サーバー言語を選択')
     .addOptions(LANG_CHOICES);
 
-  const rowSel = new ActionRowBuilder().addComponents(select);
-  const rowBtn = new ActionRowBuilder().addComponents(
+  const rowSel=new ActionRowBuilder().addComponents(select);
+  const rowBtn=new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId('tr_on').setLabel('翻訳ON').setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId('tr_off').setLabel('翻訳OFF').setStyle(ButtonStyle.Danger)
   );
+
   await setting.send({
-    content:'🌐 サーバー言語と翻訳設定を選択してください',
+    content:'🌐 サーバー言語と自動翻訳設定を選択してください',
     components:[rowSel,rowBtn]
   });
-
   await i.reply({ content:'✅ セットアップ完了！', flags:64 });
 }
 
@@ -135,9 +136,8 @@ async function handleAnnounce(i){
 
   const text=i.options.getString('text');
   const list=await rdb.smembers('global:channels');
-
   for(const entry of list){
-    const { guildId } = JSON.parse(entry);
+    const { guildId }=JSON.parse(entry);
     try{
       const g=await client.guilds.fetch(guildId);
       const ch=g.channels.cache.find(c=>c.name==='bot-お知らせ'&&c.isTextBased());
@@ -168,7 +168,6 @@ client.on(Events.InteractionCreate,async i=>{
 /* ---------- Message → Hub ---------- */
 client.on(Events.MessageCreate,async msg=>{
   if(msg.author.bot) return;
-
   const key=JSON.stringify({ guildId:msg.guildId, channelId:msg.channelId });
   if(!(await rdb.sismember('global:channels',key))) return;
 
@@ -177,11 +176,11 @@ client.on(Events.MessageCreate,async msg=>{
     try{
       const parent=await msg.channel.messages.fetch(msg.reference.messageId);
       replyContent=parent.content||parent.embeds?.[0]?.description||'(embed)';
-    }catch{/* ignore */}
+    }catch{}
   }
 
   await fetch(`${HUB}/publish`,{
-    method:'POST', headers:{'Content-Type':'application/json'},
+    method:'POST',headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
       globalId: randomUUID(),
       guildId: msg.guildId,
@@ -192,38 +191,47 @@ client.on(Events.MessageCreate,async msg=>{
       content: msg.content,
       replyTo: msg.reference?.messageId ?? null,
       replyContent,
-      files: msg.attachments.map(a=>({ url:a.url,name:a.name }))
+      files: msg.attachments.map(a=>({ url:a.url, name:a.name }))
     })
   });
 });
 
-/* ---------- Relay 受信 ---------- */
+/* ---------- Relay 受信 (自動翻訳) ---------- */
 const api=express(); api.use(bodyParser.json());
 
 api.post('/relay',async(req,res)=>{
   const { toGuild,toChannel,userTag,userAvatar,originGuild,
-          content,replyTo,replyContent,files }=req.body;
+          content,replyTo,replyContent,files,targetLang }=req.body;
   try{
     const g=await client.guilds.fetch(toGuild);
     const ch=await g.channels.fetch(toChannel);
     if(!ch.isTextBased()) return res.sendStatus(404);
 
+    let finalContent=content, wasTranslated=false;
+    if(targetLang){
+      try{
+        finalContent=await translate(content,targetLang);
+        wasTranslated=true;
+      }catch(err){ console.error('Translate API err:',err.message); }
+    }
+
     const embed={
       author:{ name:`${userTag} @ ${originGuild}`, icon_url:userAvatar },
-      description:content,
-      footer:{ text:'🌐 global chat' }
+      description:finalContent,
+      footer:{ text:`🌐 global chat${wasTranslated?' • auto-translated':''}` }
     };
+
     const opts={ embeds:[embed] };
     if(files?.length) opts.files=files;
 
+    // reply handling
     if(replyTo){
       try{
         await ch.messages.fetch(replyTo,{cache:false});
         opts.reply={ messageReference:replyTo };
       }catch{
-        if(replyContent){
-          embed.fields=[{ name:'Reply', value:`> ${replyContent.slice(0,180)}` }];
-        }
+        const quote=replyContent ? `> ${replyContent.slice(0,180)}` : '(元メッセージが別サーバー)';
+        embed.fields=[{ name:'Reply', value:quote }];
       }
     }
 
@@ -236,7 +244,7 @@ api.post('/relay',async(req,res)=>{
 });
 
 /* ---------- 国旗リアクション翻訳 ---------- */
-client.on(Events.MessageReactionAdd,async (reaction,user)=>{
+client.on(Events.MessageReactionAdd,async(reaction,user)=>{
   if(user.bot) return;
   if(reaction.partial) await reaction.fetch();
   if(reaction.message.partial) await reaction.message.fetch();
@@ -259,7 +267,7 @@ client.on(Events.MessageReactionAdd,async (reaction,user)=>{
   }
 });
 
-/* ---------- Startup ---------- */
+/* ---------- 起動 ---------- */
 client.once(Events.ClientReady,()=>console.log(`✅ Logged in as ${client.user.tag}`));
 client.login(process.env.DISCORD_TOKEN);
 api.get('/healthz',(_q,r)=>r.send('OK'));

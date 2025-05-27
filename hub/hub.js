@@ -1,5 +1,5 @@
 /**
- * hub/hub.js – Relay + JSON 修復 + ログ改善
+ * hub/hub.js – Global Chat Relay (auto-translate対応)
  */
 
 import express from 'express';
@@ -14,31 +14,30 @@ const redis=new Redis({
   token:process.env.UPSTASH_REDIS_REST_TOKEN
 });
 
-/* Join */
+/* ---------- Join / Leave ---------- */
 app.post('/global/join',async(req,res)=>{
   const key=JSON.stringify(req.body);
   if(await redis.sismember('global:channels',key)){
-    console.log('🔄 Already joined',req.body);
+    console.log('🔄 already joined',req.body);
     return res.send({ status:'already' });
   }
   await redis.sadd('global:channels',key);
-  console.log('🟢 Joined',req.body);
+  console.log('🟢 joined',req.body);
   res.send({ status:'joined' });
 });
 
-/* Leave */
 app.post('/global/leave',async(req,res)=>{
   const key=JSON.stringify(req.body);
   await redis.srem('global:channels',key);
-  console.log('🔴 Left',req.body);
+  console.log('🔴 left',req.body);
   res.send({ status:'left' });
 });
 
-/* Publish */
+/* ---------- Publish ---------- */
 app.post('/publish',async(req,res)=>{
   const msg=req.body;
   if(/(?:@everyone|@here|<@!?\\d+>)/.test(msg.content)){
-    console.log('🔒 Mention blocked'); return res.send({ status:'blocked' });
+    console.log('🔒 mention blocked'); return res.send({ status:'blocked' });
   }
 
   const list=await redis.smembers('global:channels');
@@ -49,27 +48,33 @@ app.post('/publish',async(req,res)=>{
         ? JSON.parse(entry)
         : entry;
     }catch{
-      console.warn('⚠️ Corrupted entry removed',entry);
+      console.warn('⚠️ corrupted entry removed',entry);
       await redis.srem('global:channels',entry);
       continue;
     }
-    const { guildId, channelId }=parsed;
+    const { guildId,channelId }=parsed;
     if(guildId===msg.guildId) continue;
+
+    /* ▼ 宛先ギルドの言語設定を取得 */
+    const langInfo = await redis.hgetall(`lang:${guildId}`);
+    const targetLang = (langInfo?.autoTranslate==='true' && langInfo.lang)
+      ? langInfo.lang
+      : null;
 
     try{
       const r=await fetch(`${process.env.BOT_ENDPOINT}/relay`,{
         method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({ ...msg, toGuild:guildId, toChannel:channelId })
+        body:JSON.stringify({ ...msg, toGuild:guildId, toChannel:channelId, targetLang })
       });
       const js=await r.json().catch(()=>({}));
       console.log(`➡️ ${guildId}/${channelId}`,r.status,js.messageId??'');
     }catch(err){
-      console.error('Relay error →',guildId,channelId,err.message);
+      console.error('relay err →',guildId,channelId,err.message);
     }
   }
   res.send({ status:'ok' });
 });
 
-/* Health */
+/* ---------- Health ---------- */
 app.get('/healthz',(_q,r)=>r.send('OK'));
 app.listen(process.env.PORT||3000,()=>console.log('Hub listening'));
