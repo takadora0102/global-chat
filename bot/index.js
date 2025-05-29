@@ -125,7 +125,7 @@ client.once(Events.ClientReady, async () => {
   await client.application.commands.set([
     cmdSetup, cmdAnnounce, cmdAddItem
   ]);
-  console.log(`✅ Logged in as ${client.user.tag}`);
+  console.log(`✅ Discord client ready as ${client.user.tag}`);
 });
 
 /* ------------------------------------------------------------------
@@ -322,14 +322,10 @@ async function handleAddItem(interaction) {
  * Interaction dispatcher
  * ------------------------------------------------------------------ */
 client.on(Events.InteractionCreate, async i => {
-  if (!i.isChatInputCommand()) return;
-  switch (i.commandName) {
-    case 'setup':
-      return handleSetup(i);
-    case 'announce':
-      return handleAnnounce(i);
-    case 'additem':
-      return handleAddItem(i);
+  if (i.isChatInputCommand()) {
+    if (i.commandName === 'setup') return handleSetup(i);
+    if (i.commandName === 'announce') return handleAnnounce(i);
+    if (i.commandName === 'additem') return handleAddItem(i);
   }
 
   if (i.isStringSelectMenu()) {
@@ -515,3 +511,10 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     console.error('Translate reaction error:', e);
   }
 });
+
+/* ------------------------------------------------------------------
+ * Finally, log into Discord
+ * ------------------------------------------------------------------ */
+client.login(process.env.DISCORD_TOKEN)
+  .then(() => console.log('✅ Discord client logged in'))
+  .catch(err => console.error('❌ Discord login failed', err));
