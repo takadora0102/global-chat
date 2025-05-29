@@ -1,21 +1,24 @@
-// bot/deploy-commands.js
+// deploy-commands.js
 import 'dotenv/config';
-import { REST, Routes, SlashCommandBuilder } from 'discord.js';
+import { REST, Routes, SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 import { data as cmdGlobal } from './commands/global.js';
 
-/* ----- /setup は管理者向けなので維持 ----- */
+/* ----- /setup (Admin only) ----- */
 const cmdSetup = new SlashCommandBuilder()
   .setName('setup')
-  .setDescription('カテゴリとチャンネルを自動作成')
-  .setDefaultMemberPermissions(0x00000008);     // Administrator
+  .setDescription('Automatically create the Global Chat category and its channels')
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
-/* ----- /announce → 権限指定を外す ----- */
+/* ----- /announce (Bot Owner) ----- */
 const cmdAnnounce = new SlashCommandBuilder()
   .setName('announce')
-  .setDescription('全サーバーの #bot-お知らせ に一斉送信')
+  .setDescription('Broadcast an announcement to the #bot-announcements channel on all servers')
   .addStringOption(o =>
-    o.setName('text').setDescription('メッセージ本文').setRequired(true)
-  );                                            // ← 権限行なし
+    o
+      .setName('text')
+      .setDescription('Announcement message')
+      .setRequired(true)
+  );
 
 const commands = [
   cmdSetup.toJSON(),
