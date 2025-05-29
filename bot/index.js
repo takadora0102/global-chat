@@ -1,11 +1,12 @@
 /**
- * index.js – Global Chat Bot (English UI + Support Server Invite)
+ * index.js – Global Chat Bot (with dynamic /additem and support invite)
  * ------------------------------------------------------------------
  *  - Cross-server global chat
  *  - Auto-translation & reaction translation
  *  - Time-zone tags & auto-detect
  *  - Broadcast announcements
- *  - NEW: After /setup, posts a support-server invite in #bot-announcements
+ *  - Dynamic shop items via /additem
+ *  - After /setup, posts a support-server invite in #bot-announcements
  */
 
 import 'dotenv/config';
@@ -79,8 +80,6 @@ const rdb = new Redis({
   url:   process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN
 });
-
-/* --- support-server invite link ---------------------------------- */
 const SUPPORT_INVITE = 'https://discord.gg/5jcg3kvWSm';
 
 /* ------------------------------------------------------------------
@@ -111,13 +110,21 @@ const cmdAnnounce = new SlashCommandBuilder()
     o.setName('text').setDescription('Message text').setRequired(true)
   );
 
+const cmdAddItem = new SlashCommandBuilder()
+  .setName('additem')
+  .setDescription('Add a new shop item (role) dynamically')
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .addStringOption(o =>
+    o.setName('name').setDescription('Role name').setRequired(true)
+  )
+  .addStringOption(o =>
+    o.setName('color').setDescription('HEX color code, e.g. #FFA500').setRequired(true)
+  );
+
 client.once(Events.ClientReady, async () => {
-  try {
-    await client.application.commands.set([cmdSetup, cmdAnnounce]);
-    console.log('✅ Slash commands registered');
-  } catch (e) {
-    console.error('Slash command register error:', e);
-  }
+  await client.application.commands.set([
+    cmdSetup, cmdAnnounce, cmdAddItem
+  ]);
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
@@ -128,17 +135,17 @@ async function handleSetup(interaction) {
   const guild = interaction.guild;
   const everyone = guild.roles.everyone;
 
-  /* 1) Category --------------------------------------------------- */
-  const category = guild.channels.cache.find(
-    c => c.name === 'Global Chat' && c.type === ChannelType.GuildCategory
+  // 1) Global Chat category
+  const category = guild.channels.cache.find(c =>
+    c.name === 'Global Chat' && c.type === ChannelType.GuildCategory
   ) || await guild.channels.create({
     name: 'Global Chat',
     type: ChannelType.GuildCategory
   });
 
-  /* 2) bot-announcements channel --------------------------------- */
-  const botNotice = category.children.cache.find(
-    c => c.name === 'bot-announcements' && c.type === ChannelType.GuildText
+  // 2) bot-announcements channel
+  const botNotice = category.children.cache.find(c =>
+    c.name === 'bot-announcements' && c.type === ChannelType.GuildText
   ) || await guild.channels.create({
     name: 'bot-announcements',
     type: ChannelType.GuildText,
@@ -148,7 +155,7 @@ async function handleSetup(interaction) {
     ]
   });
 
-  /* --- NEW: send support-server invite -------------------------- */
+  // Send support invite
   try {
     await botNotice.send(
       `🌟 **Thanks for setting up Global Chat Bot!**\n` +
@@ -159,7 +166,7 @@ async function handleSetup(interaction) {
     console.error('Failed to post support invite:', err);
   }
 
-  /* 3) Follow existing announcement channel (optional) ------------ */
+  // 3) Follow source announce channel if configured
   if (process.env.SOURCE_ANNOUNCE_CHANNEL_ID) {
     try {
       const res = await fetch(
@@ -180,9 +187,9 @@ async function handleSetup(interaction) {
     }
   }
 
-  /* 4) settings channel ------------------------------------------ */
-  const settingsCh = category.children.cache.find(
-    c => c.name === 'settings' && c.type === ChannelType.GuildText
+  // 4) settings channel
+  const settingsCh = category.children.cache.find(c =>
+    c.name === 'settings' && c.type === ChannelType.GuildText
   ) || await guild.channels.create({
     name: 'settings',
     type: ChannelType.GuildText,
@@ -192,16 +199,16 @@ async function handleSetup(interaction) {
     ]
   });
 
-  /* 5) global-chat channel --------------------------------------- */
-  const globalCh = category.children.cache.find(
-    c => c.name === 'global-chat' && c.type === ChannelType.GuildText
+  // 5) global-chat channel
+  const globalCh = category.children.cache.find(c =>
+    c.name === 'global-chat' && c.type === ChannelType.GuildText
   ) || await guild.channels.create({
     name: 'global-chat',
     type: ChannelType.GuildText,
     parent: category.id
   });
 
-  /* 6) register with hub ----------------------------------------- */
+  // 6) Register with Hub
   await fetch(`${HUB}/global/join`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -210,57 +217,40 @@ async function handleSetup(interaction) {
     .then(r => console.log('join status', r.status))
     .catch(e => console.error('join fetch error', e));
 
-  /* 7) language & tz menus --------------------------------------- */
+  // 7) Language & timezone menus
   const rowLang1 = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId('lang_select_1')
-      .setPlaceholder('Select server language (1/2)')
-      .addOptions(
-        LANG_CHOICES.slice(0, 25).map(l => ({
-          label: l.label,
-          value: l.value,
-          emoji: l.emoji
-        }))
-      )
+      .setCustomId('lang1')
+      .setPlaceholder('Select language (1/2)')
+      .addOptions(LANG_CHOICES.slice(0,25).map(l => ({
+        label: l.label, value: l.value, emoji: l.emoji
+      })))
   );
   const rowLang2 = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId('lang_select_2')
-      .setPlaceholder('Select server language (2/2)')
-      .addOptions(
-        LANG_CHOICES.slice(25).map(l => ({
-          label: l.label,
-          value: l.value,
-          emoji: l.emoji
-        }))
-      )
+      .setCustomId('lang2')
+      .setPlaceholder('Select language (2/2)')
+      .addOptions(LANG_CHOICES.slice(25).map(l => ({
+        label: l.label, value: l.value, emoji: l.emoji
+      })))
   );
   const rowTz = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId('tz_select')
+      .setCustomId('tz')
       .setPlaceholder('Select time zone')
       .addOptions(TZ_CHOICES)
   );
-  const rowTzAuto = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('tz_auto')
-      .setLabel('🌏 Auto Detect')
-      .setStyle(ButtonStyle.Primary)
+  const rowAuto = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('tz_auto').setLabel('🌏 Auto Detect').setStyle(ButtonStyle.Primary)
   );
-  const rowTrans = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('tr_on')
-      .setLabel('Translation ON')
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId('tr_off')
-      .setLabel('Translation OFF')
-      .setStyle(ButtonStyle.Danger)
+  const rowTr = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('tr_on').setLabel('Translation ON').setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId('tr_off').setLabel('Translation OFF').setStyle(ButtonStyle.Danger)
   );
 
   await settingsCh.send({
     content: '🌐 Configure server language, time zone, and auto-translation',
-    components: [rowLang1, rowLang2, rowTz, rowTzAuto, rowTrans]
+    components: [rowLang1, rowLang2, rowTz, rowAuto, rowTr]
   });
 
   await interaction.reply({
@@ -281,43 +271,78 @@ async function handleAnnounce(interaction) {
   }
   await interaction.deferReply({ ephemeral: true });
   const text = interaction.options.getString('text');
-  const servers = await rdb.smembers('global:channels');
-  for (const entry of servers) {
+  const list = await rdb.smembers('global:channels');
+  for (const entry of list) {
     const { guildId } = JSON.parse(entry);
     try {
       const g = await client.guilds.fetch(guildId);
-      const ch = g.channels.cache.find(
-        c => c.name === 'bot-announcements' && c.isTextBased()
+      const ch = g.channels.cache.find(c =>
+        c.name === 'bot-announcements' && c.isTextBased()
       );
-      if (ch) await ch.send(`📢 **Announcement**\n${text}`);
-    } catch {/* ignore */}
+      if (ch) await ch.send(`📢 Announcement\n${text}`);
+    } catch {}
   }
   await interaction.editReply({
-    content: `✅ Announcement sent to ${servers.length} servers.`
+    content: `✅ Announcement sent to ${list.length} servers.`,
   });
 }
 
 /* ------------------------------------------------------------------
- * InteractionCreate dispatcher
+ * /additem handler
  * ------------------------------------------------------------------ */
-client.on(Events.InteractionCreate, async i => {
-  if (i.isChatInputCommand()) {
-    if (i.commandName === 'setup')    return handleSetup(i);
-    if (i.commandName === 'announce') return handleAnnounce(i);
+async function handleAddItem(interaction) {
+  const name = interaction.options.getString('name').trim();
+  let color = interaction.options.getString('color').trim();
+  if (!/^#?[0-9A-Fa-f]{6}$/.test(color)) {
+    return interaction.reply({
+      content: '❌ Invalid HEX color format. Use e.g. #FFA500.',
+      flags: MessageFlags.Ephemeral
+    });
+  }
+  if (!color.startsWith('#')) color = '#' + color;
+
+  const id = name.toLowerCase().replace(/\s+/g, '_').replace(/[^0-9a-z_]/g, '');
+  const key = 'shop:items';
+  const exists = await rdb.hget(key, id);
+  if (exists) {
+    return interaction.reply({
+      content: `❌ An item with ID \`${id}\` already exists.`,
+      flags: MessageFlags.Ephemeral
+    });
   }
 
-  /* Select-menu handlers */
+  await rdb.hset(key, { [id]: JSON.stringify({ name, color }) });
+  await interaction.reply({
+    content: `✅ Added new shop item:\n• ID: \`${id}\`\n• Name: **${name}**\n• Color: **${color}**`,
+    flags: MessageFlags.Ephemeral
+  });
+}
+
+/* ------------------------------------------------------------------
+ * Interaction dispatcher
+ * ------------------------------------------------------------------ */
+client.on(Events.InteractionCreate, async i => {
+  if (!i.isChatInputCommand()) return;
+  switch (i.commandName) {
+    case 'setup':
+      return handleSetup(i);
+    case 'announce':
+      return handleAnnounce(i);
+    case 'additem':
+      return handleAddItem(i);
+  }
+
   if (i.isStringSelectMenu()) {
-    if (['lang_select_1', 'lang_select_2'].includes(i.customId)) {
+    if (['lang1', 'lang2'].includes(i.customId)) {
       const lang = i.values[0];
       await rdb.hset(`lang:${i.guildId}`, { lang, autoTranslate: 'true' });
-      return i.update({                      // use update to avoid double reply
+      return i.update({
         content: `📌 Server language set to **${lang}**`,
         components: i.message.components,
         flags: MessageFlags.Ephemeral
       });
     }
-    if (i.customId === 'tz_select') {
+    if (i.customId === 'tz') {
       const tz = i.values[0];
       await rdb.hset(`tz:${i.guildId}`, { tz });
       return i.update({
@@ -328,23 +353,16 @@ client.on(Events.InteractionCreate, async i => {
     }
   }
 
-  /* Button handlers */
   if (i.isButton()) {
     if (i.customId === 'tz_auto') {
       const guessed = guessOffsetByLocale(i.locale);
       const sign = guessed >= 0 ? '+' : '';
       return i.reply({
-        content: `🌏 Detected: UTC${sign}${guessed} (${CITY_BY_OFFSET[guessed]})`,
+        content: `🌏 Detected UTC${sign}${guessed}`,
         components: [
           new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`tz_yes_${guessed}`)
-              .setLabel('Yes')
-              .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-              .setCustomId('tz_no')
-              .setLabel('No')
-              .setStyle(ButtonStyle.Danger)
+            new ButtonBuilder().setCustomId(`tz_yes_${guessed}`).setLabel('Yes').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('tz_no').setLabel('No').setStyle(ButtonStyle.Danger)
           )
         ],
         flags: MessageFlags.Ephemeral
@@ -353,18 +371,10 @@ client.on(Events.InteractionCreate, async i => {
     if (i.customId.startsWith('tz_yes_')) {
       const tz = i.customId.split('_')[2];
       await rdb.hset(`tz:${i.guildId}`, { tz });
-      return i.update({
-        content: `🕒 Time zone set to UTC${tz >= 0 ? '+' : ''}${tz}`,
-        components: [],
-        flags: MessageFlags.Ephemeral
-      });
+      return i.update({ content: `🕒 Time zone set to UTC${tz}`, components: [], flags: MessageFlags.Ephemeral });
     }
     if (i.customId === 'tz_no') {
-      return i.update({
-        content: '⏹️ Cancelled.',
-        components: [],
-        flags: MessageFlags.Ephemeral
-      });
+      return i.update({ content: '⏹️ Cancelled.', components: [], flags: MessageFlags.Ephemeral });
     }
     if (['tr_on', 'tr_off'].includes(i.customId)) {
       const flag = i.customId === 'tr_on' ? 'true' : 'false';
@@ -378,7 +388,7 @@ client.on(Events.InteractionCreate, async i => {
 });
 
 /* ------------------------------------------------------------------
- * MessageCreate → hub /publish
+ * Message relay to Hub
  * ------------------------------------------------------------------ */
 client.on(Events.MessageCreate, async msg => {
   if (msg.author.bot) return;
@@ -386,66 +396,61 @@ client.on(Events.MessageCreate, async msg => {
   if (!(await rdb.sismember('global:channels', key))) return;
 
   const tzInfo = await rdb.hgetall(`tz:${msg.guildId}`);
-  const originTz = tzInfo?.tz ?? '0';
+  const originTz = tzInfo?.tz || '0';
   let replyContent = null;
   if (msg.reference?.messageId) {
     try {
       const ref = await msg.channel.messages.fetch(msg.reference.messageId);
       replyContent = ref.content || ref.embeds?.[0]?.description || '(embed)';
-    } catch {/* ignore */}
+    } catch {}
   }
 
   await fetch(`${HUB}/publish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      globalId: randomUUID(),
-      guildId: msg.guildId,
-      channelId: msg.channelId,
-      userTag: msg.author.tag,
-      userAvatar: msg.author.displayAvatarURL(),
+      globalId:    randomUUID(),
+      guildId:     msg.guildId,
+      channelId:   msg.channelId,
+      userTag:     msg.author.tag,
+      userAvatar:  msg.author.displayAvatarURL(),
       originGuild: msg.guild.name,
       originTz,
-      content: msg.content,
-      replyTo: msg.reference?.messageId ?? null,
+      content:     msg.content,
+      replyTo:     msg.reference?.messageId || null,
       replyContent,
-      sentAt: Date.now(),
-      files: msg.attachments.map(a => ({ attachment: a.url, name: a.name }))
+      sentAt:      Date.now(),
+      files:       msg.attachments.map(a => ({ attachment: a.url, name: a.name }))
     })
-  })
-    .then(r => r.text().then(t => console.log('publish', r.status, t)))
-    .catch(e => console.error('publish ERR', e));
+  }).catch(e => console.error('publish ERR', e));
 });
 
 /* ------------------------------------------------------------------
- * /relay → bot
+ * Relay endpoint
  * ------------------------------------------------------------------ */
 const api = express();
 api.use(bodyParser.json());
 
 api.post('/relay', async (req, res) => {
   console.log('relay req →', req.body);
-  const { toGuild, toChannel, userTag, userAvatar, originGuild, originTz = '0',
-          content, replyTo, replyContent, files, targetLang, sentAt } = req.body;
+  const {
+    toGuild, toChannel, userTag, userAvatar, originGuild,
+    originTz = '0', content, replyTo, replyContent,
+    files, targetLang, sentAt
+  } = req.body;
+
   try {
     const g = await client.guilds.fetch(toGuild);
-    let ch;
-    try { ch = await g.channels.fetch(toChannel); }
-    catch (err) {
-      console.error('Relay fetch channel error:', err.code, err.message);
-      if (err.code === 10003) return res.status(410).send({ status: 'unknown_channel' });
-      return res.status(500).send({ status: 'fetch_channel_error' });
-    }
+    const ch = await g.channels.fetch(toChannel);
     if (!ch.isTextBased()) return res.sendStatus(404);
 
-    let translated = null, wasTranslated = false;
+    let translated = null;
+    let wasTranslated = false;
     if (targetLang) {
       try {
         translated = await translate(content, targetLang);
         wasTranslated = true;
-      } catch (e) {
-        console.error('Translate error:', e.message);
-      }
+      } catch {}
     }
 
     const description = wasTranslated
@@ -464,26 +469,29 @@ api.post('/relay', async (req, res) => {
 
     if (replyTo) {
       try {
-        await ch.messages.fetch(replyTo, { cache: false });
+        await ch.messages.fetch(replyTo);
         opts.reply = { messageReference: replyTo };
       } catch {
-        const quote = replyContent
-          ? `> ${replyContent.slice(0, 180)}`
-          : '(original message on another server)';
-        embed.fields = [{ name: 'Reply', value: quote }];
+        embed.fields = [{
+          name: 'Reply',
+          value: replyContent ? `> ${replyContent.slice(0, 180)}` : '(original message)'
+        }];
       }
     }
 
     const sent = await ch.send(opts);
-    return res.send({ status: 'relayed', messageId: sent.id });
+    res.send({ status: 'relayed', messageId: sent.id });
   } catch (err) {
-    console.error('Relay error:', err.message);
-    return res.sendStatus(500);
+    console.error('Relay error:', err);
+    res.sendStatus(500);
   }
 });
 
+api.get('/healthz', (_q, r) => r.send('OK'));
+api.listen(process.env.PORT || 3000, () => console.log('🚦 Relay server listening on port', process.env.PORT || 3000));
+
 /* ------------------------------------------------------------------
- * Flag reaction translation
+ * Reaction translation
  * ------------------------------------------------------------------ */
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   if (user.bot) return;
@@ -504,15 +512,6 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
       }]
     });
   } catch (e) {
-    console.error('Translate reaction error:', e.message);
+    console.error('Translate reaction error:', e);
   }
 });
-
-/* ------------------------------------------------------------------
- * Start bot & relay server
- * ------------------------------------------------------------------ */
-client.login(process.env.DISCORD_TOKEN);
-api.get('/healthz', (_q, r) => r.send('OK'));
-api.listen(process.env.PORT || 3000, () =>
-  console.log('🚦 Relay server listening on port', process.env.PORT || 3000)
-);

@@ -20,9 +20,29 @@ const cmdAnnounce = new SlashCommandBuilder()
       .setRequired(true)
   );
 
+/* ----- /additem (Admin only) ----- */
+const cmdAddItem = new SlashCommandBuilder()
+  .setName('additem')
+  .setDescription('Add a new shop item (role) dynamically')
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .addStringOption(o =>
+    o
+      .setName('name')
+      .setDescription('The role name')
+      .setRequired(true)
+  )
+  .addStringOption(o =>
+    o
+      .setName('color')
+      .setDescription('HEX color code, e.g. #FFA500')
+      .setRequired(true)
+  );
+
+/* ----- Assemble and deploy ----- */
 const commands = [
   cmdSetup.toJSON(),
   cmdAnnounce.toJSON(),
+  cmdAddItem.toJSON(),
   cmdGlobal.toJSON()
 ];
 
