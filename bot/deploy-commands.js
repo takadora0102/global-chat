@@ -1,7 +1,5 @@
-// deploy-commands.js
 import 'dotenv/config';
 import { REST, Routes, SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import { data as cmdGlobal } from './commands/global.js';
 
 /* ----- /setup (Admin only) ----- */
 const cmdSetup = new SlashCommandBuilder()
@@ -9,41 +7,26 @@ const cmdSetup = new SlashCommandBuilder()
   .setDescription('Automatically create the Global Chat category and its channels')
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
-/* ----- /announce (Bot Owner) ----- */
-const cmdAnnounce = new SlashCommandBuilder()
-  .setName('announce')
-  .setDescription('Broadcast an announcement to the #bot-announcements channel on all servers')
-  .addStringOption(o =>
-    o
-      .setName('text')
-      .setDescription('Announcement message')
-      .setRequired(true)
-  );
+/* ----- /profile ----- */
+const cmdProfile = new SlashCommandBuilder()
+  .setName('profile')
+  .setDescription('Show your total message count and total likes received');
 
-/* ----- /additem (Admin only) ----- */
-const cmdAddItem = new SlashCommandBuilder()
-  .setName('additem')
-  .setDescription('Add a new shop item (role) dynamically')
-  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-  .addStringOption(o =>
-    o
-      .setName('name')
-      .setDescription('The role name')
-      .setRequired(true)
+/* ----- /ranking ----- */
+const cmdRanking = new SlashCommandBuilder()
+  .setName('ranking')
+  .setDescription('Show leaderboards')
+  .addSubcommand((s) =>
+    s.setName('messages').setDescription('Top 10 by messages sent')
   )
-  .addStringOption(o =>
-    o
-      .setName('color')
-      .setDescription('HEX color code, e.g. #FFA500')
-      .setRequired(true)
+  .addSubcommand((s) =>
+    s.setName('likes').setDescription('Top 10 by likes received')
   );
 
-/* ----- Assemble and deploy ----- */
 const commands = [
   cmdSetup.toJSON(),
-  cmdAnnounce.toJSON(),
-  cmdAddItem.toJSON(),
-  cmdGlobal.toJSON()
+  cmdProfile.toJSON(),
+  cmdRanking.toJSON()
 ];
 
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
