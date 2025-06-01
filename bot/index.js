@@ -1,6 +1,6 @@
 /**
  * index.js – Global Chat Bot (Jun-2025 完全版)
- * ・ポイント機能を廃止し、残すコマンドは /setup, /profile, /ranking のみ
+ * ・ポイント機能を廃止し、/setup, /profile, /ranking の３コマンドのみを残したバージョン
  * ・global-chat のリレー、翻訳、いいねカウントはそのまま動作
  */
 
@@ -18,7 +18,6 @@ import bodyParser from 'body-parser';
 import { randomUUID } from 'crypto';
 import { Redis } from '@upstash/redis';
 import { FLAG_TO_LANG } from './constants.js';
-import { translate } from './translate.js'; // 翻訳関数の実装を別ファイルに置いている前提
 
 /* ---------- 必須環境変数チェック ---------- */
 [
@@ -53,6 +52,17 @@ const client = new Client({
 /* ---------- キー作成ヘルパー ---------- */
 const kMsg = (id) => `msg_cnt:${id}`;
 const kLike = (id) => `like_cnt:${id}`;
+
+/* ---------- 翻訳 helper を index.js 内に定義 ---------- */
+async function translate(text, tl) {
+  // Google 翻訳の非公式 API を使用
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Translation API error: ${res.status}`);
+  const data = await res.json();
+  // data[0] は翻訳結果の配列になる。マッピングして文字列に結合
+  return data[0].map((v) => v[0]).join('');
+}
 
 /* ---------------- /setup ハンドラ ------------------------------------------- */
 async function handleSetup(interaction) {
@@ -273,7 +283,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
       ]
     });
   } catch {
-    // 翻訳エラーは黙って無視
+    // 翻訳エラーは無視
   }
 });
 
