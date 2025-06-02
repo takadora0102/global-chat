@@ -1,8 +1,8 @@
 /**
  * index.js – Global Chat Bot (Jun-2025 完全版)
  *
- * ・ポイント機能を廃止し、/help は地域別の 2 段階セレクトメニューで実装
- * ・/setup, /profile, /ranking など既存コマンドの処理もそのまま保持
+ * ・ポイント機能を廃止し、/help は「地域 → 言語」の2段階セレクトメニューで実装
+ * ・/setup, /profile, /ranking など既存コマンドもそのまま保持
  * ・メッセージリレー、翻訳、いいねカウント機能を含む
  */
 
@@ -216,6 +216,7 @@ async function handleRanking(interaction) {
 //  InteractionCreate イベントハンドラ
 // ────────────────────────────────────────────────────────────────
 client.on(Events.InteractionCreate, async (interaction) => {
+  // このファイルの __dirname を取得するためのユーティリティ
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
 
@@ -246,7 +247,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     await interaction.reply({
       content: '🔎 ヘルプを表示したい言語の「地域」を選択してください。',
       components: [selectRegion],
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
     return;
   }
@@ -272,6 +273,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           { label: 'Tiếng Việt',      value: 'vi',     emoji: '🇻🇳' },
           { label: 'Bahasa Melayu',    value: 'ms',     emoji: '🇲🇾' },
           { label: 'Bahasa Indonesia', value: 'id',     emoji: '🇮🇩' }
+          // ── 合計 10 個。25 を超えないようにこのまま維持 ──
         ];
         break;
 
@@ -288,6 +290,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           { label: 'Українська',       value: 'uk',    emoji: '🇺🇦' },
           { label: 'ελληνικά',         value: 'el',    emoji: '🇬🇷' },
           { label: 'العربية',         value: 'ar',    emoji: '🇸🇦' }
+          // ── 合計 11 個。25 を超えない ──
         ];
         break;
 
@@ -296,6 +299,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           { label: 'English (US)',     value: 'en',     emoji: '🇺🇸' },
           { label: 'Español (MX)',    value: 'es-MX',  emoji: '🇲🇽' },
           { label: 'Français',        value: 'fr',     emoji: '🇨🇦' }
+          // ── 合計 3 個 ──
         ];
         break;
 
@@ -304,7 +308,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           { label: 'العربية',         value: 'ar',     emoji: '🇸🇦' },
           { label: 'فارسی',           value: 'fa',     emoji: '🇮🇷' },
           { label: 'Türkçe',          value: 'tr',     emoji: '🇹🇷' }
-          // 必要に応じて他の言語を追加（合計 25 個以下に）
+          // ── 合計 3 個 ──
         ];
         break;
 
@@ -313,6 +317,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           { label: 'Español (CO)',    value: 'es-CO', emoji: '🇨🇴' },
           { label: 'Español (AR)',    value: 'es-AR', emoji: '🇦🇷' },
           { label: 'Português (BR)',  value: 'pt-BR', emoji: '🇧🇷' }
+          // ── 合計 3 個 ──
         ];
         break;
 
@@ -320,17 +325,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
         languages = [
           { label: 'English (AU)',    value: 'en-AU', emoji: '🇦🇺' },
           { label: 'English (NZ)',    value: 'en-NZ', emoji: '🇳🇿' }
+          // ── 合計 2 個 ──
         ];
         break;
 
       default:
+        // フェールバック用（“その他”）
         languages = [
           { label: 'English (US)',    value: 'en',    emoji: '🇺🇸' },
           { label: '日本語',           value: 'ja',    emoji: '🇯🇵' }
+          // ── 合計 2 個 ──
         ];
         break;
     }
 
+    // 言語リストが常に 25 個以内に収まるようにしている
     const selectLanguages = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId('select_help_language')
@@ -391,7 +400,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 //
 // ────────────────────────────────────────────────────────────────
-//  MessageCreate イベント：メッセージ数カウント & HUB へリレー
+//  MessageCreate: メッセージ数カウント & HUB へリレー
 // ────────────────────────────────────────────────────────────────
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
@@ -439,7 +448,7 @@ client.on(Events.MessageCreate, async (message) => {
 
 //
 // ────────────────────────────────────────────────────────────────
-//  MessageReactionAdd イベント：👍 カウント & 国旗翻訳
+//  MessageReactionAdd: 👍 カウント & 国旗翻訳
 // ────────────────────────────────────────────────────────────────
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   if (user.bot) return;
