@@ -1,10 +1,9 @@
 /**
  * index.js – Global Chat Bot (Jun-2025 完全版)
  *
- * ・ポイント機能を廃止し、/help のみをスラッシュ登録する構成を前提とします。
- * ・/setup, /profile, /ranking などのコマンドはこのファイル内で処理を残していますが、
- *   deploy-commands.js に登録がない場合は動作しません。必要に応じて deploy-commands.js にも
- *   追加してください。
+ * ・ポイント機能を廃止し、/help は地域別の 2 段階セレクトメニューで実装
+ * ・/setup, /profile, /ranking など既存コマンドの処理もそのまま保持
+ * ・メッセージリレー、翻訳、いいねカウント機能を含む
  */
 
 import 'dotenv/config';
@@ -25,29 +24,39 @@ import { randomUUID } from 'crypto';
 import { Redis } from '@upstash/redis';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { FLAG_TO_LANG } from './constants.js'; // 国旗→言語コードマッピング
+import { FLAG_TO_LANG } from './constants.js';
 
-/* ---------- 環境変数チェック ---------- */
-[
+//
+// ────────────────────────────────────────────────────────────────
+//  環境変数チェック
+// ────────────────────────────────────────────────────────────────
+const requiredEnv = [
   'DISCORD_TOKEN',
   'OWNER_ID',
   'HUB_ENDPOINT',
   'UPSTASH_REDIS_REST_URL',
   'UPSTASH_REDIS_REST_TOKEN'
-].forEach((k) => {
-  if (!process.env[k]) {
-    console.error(`❌ missing ${k}`);
+];
+for (const key of requiredEnv) {
+  if (!process.env[key]) {
+    console.error(`❌ missing ${key}`);
     process.exit(1);
   }
-});
+}
 
-/* ---------- Redis 初期化 ---------- */
+//
+// ────────────────────────────────────────────────────────────────
+//  Redis 初期化 (Upstash Redis)
+// ────────────────────────────────────────────────────────────────
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN
 });
 
-/* ---------- Discord Client 初期化 ---------- */
+//
+// ────────────────────────────────────────────────────────────────
+//  Discord Client 初期化
+// ────────────────────────────────────────────────────────────────
 const client = new Client({
   intents: [
     IntentsBitField.Flags.Guilds,
@@ -57,20 +66,32 @@ const client = new Client({
   ]
 });
 
-/* ---------- キー作成ヘルパー ---------- */
+//
+// ────────────────────────────────────────────────────────────────
+//  キー作成ヘルパー
+// ────────────────────────────────────────────────────────────────
 const kMsg = (id) => `msg_cnt:${id}`;
 const kLike = (id) => `like_cnt:${id}`;
 
-/* ---------- 翻訳 helper ---------- */
+//
+// ────────────────────────────────────────────────────────────────
+//  翻訳ヘルパー
+// ────────────────────────────────────────────────────────────────
 async function translate(text, tl) {
-  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${tl}&dt=t&q=${encodeURIComponent(text)}`;
+  // Google 翻訳の非公式 API を利用
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${tl}&dt=t&q=${encodeURIComponent(
+    text
+  )}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Translation API error: ${res.status}`);
   const data = await res.json();
   return data[0].map((v) => v[0]).join('');
 }
 
-/* ---------- /setup ハンドラ ---------- */
+//
+// ────────────────────────────────────────────────────────────────
+//  /setup ハンドラ
+// ────────────────────────────────────────────────────────────────
 async function handleSetup(interaction) {
   if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
     return interaction.reply({
@@ -103,11 +124,11 @@ async function handleSetup(interaction) {
     parent: category.id
   });
 
-  // 3. 'global:channels' に登録
+  // 3. global-chat を Redis のセットに登録
   const regKey = JSON.stringify({ guildId: guild.id, channelId: globalChat.id });
   await redis.sadd('global:channels', regKey);
 
-  // 4. 中央 HUB に登録リクエスト
+  // 4. 中央 HUB に登録リクエスト送信
   try {
     await fetch(`${process.env.HUB_ENDPOINT}/register`, {
       method: 'POST',
@@ -127,7 +148,10 @@ async function handleSetup(interaction) {
   });
 }
 
-/* ---------- /profile ハンドラ ---------- */
+//
+// ────────────────────────────────────────────────────────────────
+//  /profile ハンドラ
+// ────────────────────────────────────────────────────────────────
 async function handleProfile(interaction) {
   const userId = interaction.user.id;
   const msgCount = (await redis.get(kMsg(userId))) || '0';
@@ -146,12 +170,15 @@ async function handleProfile(interaction) {
   });
 }
 
-/* ---------- /ranking ハンドラ ---------- */
+//
+// ────────────────────────────────────────────────────────────────
+//  /ranking ハンドラ
+// ────────────────────────────────────────────────────────────────
 async function handleRanking(interaction) {
   const mode = interaction.options.getSubcommand(); // 'messages' or 'likes'
   const pattern = mode === 'messages' ? 'msg_cnt:*' : 'like_cnt:*';
 
-  // Redis キー一覧を取得してユーザーごとに集計
+  // Redis のキー一覧を取得し、ユーザーごとの値を集計
   const keys = await redis.keys(pattern);
   const arr = [];
   for (const key of keys) {
@@ -162,6 +189,7 @@ async function handleRanking(interaction) {
   arr.sort((a, b) => b.v - a.v);
   arr.splice(10);
 
+  // Discord ユーザー情報を取得して表示文を作成
   const lines = await Promise.all(
     arr.map(async (r, idx) => {
       try {
@@ -183,75 +211,154 @@ async function handleRanking(interaction) {
   });
 }
 
-/* ---------- InteractionCreate イベント ---------- */
+//
+// ────────────────────────────────────────────────────────────────
+//  InteractionCreate イベントハンドラ
+// ────────────────────────────────────────────────────────────────
 client.on(Events.InteractionCreate, async (interaction) => {
-  // ────────────────────────────────────────────────
-  // 1) /help コマンド処理：言語選択メニューを返す
-  // ────────────────────────────────────────────────
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+
+  // A) /help コマンド：リージョン選択メニューを返す
   if (interaction.isChatInputCommand() && interaction.commandName === 'help') {
-    // 言語の選択肢
-    const options = [
-      { label: '日本語',           value: 'ja',    emoji: '🇯🇵' },
-      { label: 'English (US)',    value: 'en',    emoji: '🇺🇸' },
-      { label: 'English (UK)',    value: 'en-GB', emoji: '🇬🇧' },
-      { label: '中文 (简体)',        value: 'zh',    emoji: '🇨🇳' },
-      { label: '中文 (繁體)',       value: 'zh-TW', emoji: '🇹🇼' },
-      { label: '한국어',          value: 'ko',    emoji: '🇰🇷' },
-      { label: 'Español (ES)',   value: 'es',    emoji: '🇪🇸' },
-      { label: 'Español (MX)',   value: 'es-MX', emoji: '🇲🇽' },
-      { label: 'Français',       value: 'fr',    emoji: '🇫🇷' },
-      { label: 'Deutsch',        value: 'de',    emoji: '🇩🇪' },
-      { label: 'Português (PT)', value: 'pt',    emoji: '🇵🇹' },
-      { label: 'Português (BR)', value: 'pt-BR', emoji: '🇧🇷' },
-      { label: 'Русский',         value: 'ru',    emoji: '🇷🇺' },
-      { label: 'Українська',      value: 'uk',    emoji: '🇺🇦' },
-      { label: 'Ελληνικά',        value: 'el',    emoji: '🇬🇷' },
-      { label: 'עִבְרִית',        value: 'he',    emoji: '🇮🇱' },
-      { label: 'اُردُو',          value: 'ur',    emoji: '🇵🇰' },
-      { label: 'Bahasa Melayu',   value: 'ms',    emoji: '🇲🇾' },
-      { label: 'Español (CO)',   value: 'es-CO', emoji: '🇨🇴' },
-      { label: 'فارسی',          value: 'fa',    emoji: '🇮🇷' },
-      { label: 'বাংলা',          value: 'bn',    emoji: '🇧🇩' },
-      { label: 'ไทย',           value: 'th',    emoji: '🇹🇭' },
-      { label: 'Tiếng Việt',     value: 'vi',    emoji: '🇻🇳' },
-      { label: 'हिन्दी',         value: 'hi',    emoji: '🇮🇳' },
-      { label: 'Bahasa Indonesia',value: 'id',   emoji: '🇮🇩' },
-      { label: 'العربية',        value: 'ar',    emoji: '🇸🇦' }
+    const regions = [
+      { label: 'アジア',           value: 'asia',              emoji: '🌏' },
+      { label: 'ヨーロッパ',       value: 'europe',            emoji: '🌍' },
+      { label: '北アメリカ',       value: 'north_america',     emoji: '🌎' },
+      { label: '中東・アフリカ',    value: 'middle_east_africa',emoji: '🕊️' },
+      { label: '南アメリカ',       value: 'south_america',     emoji: '🌎' },
+      { label: 'オセアニア',       value: 'oceania',           emoji: '🌏' }
     ];
 
-    const selectMenu = new ActionRowBuilder().addComponents(
+    const selectRegion = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
-        .setCustomId('select_help_language')
-        .setPlaceholder('表示する言語を選択してください')
+        .setCustomId('select_help_region')
+        .setPlaceholder('まずは地域を選択してください')
         .addOptions(
-          options.map(opt => ({
-            label: opt.label,
-            value: opt.value,
-            emoji: opt.emoji
+          regions.map((r) => ({
+            label: r.label,
+            value: r.value,
+            emoji: r.emoji
           }))
         )
     );
 
     await interaction.reply({
-      content: 'ヘルプを表示する言語を選んでください。',
-      components: [selectMenu],
+      content: '🔎 ヘルプを表示したい言語の「地域」を選択してください。',
+      components: [selectRegion],
       ephemeral: true
     });
     return;
   }
 
-  // ────────────────────────────────────────────────
-  // 2) 言語選択メニュー後の処理：HELP_TEXTS から該当言語を返す
-  // ────────────────────────────────────────────────
-  if (interaction.isStringSelectMenu() && interaction.customId === 'select_help_language') {
-    // commands/help.js の HELP_TEXTS を動的インポート
-    const { HELP_TEXTS } = await import(path.join(
-      fileURLToPath(import.meta.url),
-      '..',
-      'commands',
-      'help.js'
-    ));
+  // B) リージョン選択後：その地域に属する言語選択メニューを返す
+  if (
+    interaction.isStringSelectMenu() &&
+    interaction.customId === 'select_help_region'
+  ) {
+    const chosenRegion = interaction.values[0];
+    let languages = [];
 
+    switch (chosenRegion) {
+      case 'asia':
+        languages = [
+          { label: '日本語',            value: 'ja',     emoji: '🇯🇵' },
+          { label: '中文 (简体)',         value: 'zh',     emoji: '🇨🇳' },
+          { label: '中文 (繁體)',        value: 'zh-TW',  emoji: '🇹🇼' },
+          { label: '한국어',           value: 'ko',     emoji: '🇰🇷' },
+          { label: 'हिन्दी',          value: 'hi',     emoji: '🇮🇳' },
+          { label: 'বাংলা',          value: 'bn',     emoji: '🇧🇩' },
+          { label: 'ไทย',            value: 'th',     emoji: '🇹🇭' },
+          { label: 'Tiếng Việt',      value: 'vi',     emoji: '🇻🇳' },
+          { label: 'Bahasa Melayu',    value: 'ms',     emoji: '🇲🇾' },
+          { label: 'Bahasa Indonesia', value: 'id',     emoji: '🇮🇩' }
+        ];
+        break;
+
+      case 'europe':
+        languages = [
+          { label: 'English (US)',     value: 'en',    emoji: '🇺🇸' },
+          { label: 'English (UK)',     value: 'en-GB', emoji: '🇬🇧' },
+          { label: 'Español (ES)',    value: 'es',    emoji: '🇪🇸' },
+          { label: 'Español (CO)',    value: 'es-CO', emoji: '🇨🇴' },
+          { label: 'Español (MX)',    value: 'es-MX', emoji: '🇲🇽' },
+          { label: 'Français',        value: 'fr',    emoji: '🇫🇷' },
+          { label: 'Deutsch',         value: 'de',    emoji: '🇩🇪' },
+          { label: 'Русский',          value: 'ru',    emoji: '🇷🇺' },
+          { label: 'Українська',       value: 'uk',    emoji: '🇺🇦' },
+          { label: 'ελληνικά',         value: 'el',    emoji: '🇬🇷' },
+          { label: 'العربية',         value: 'ar',    emoji: '🇸🇦' }
+        ];
+        break;
+
+      case 'north_america':
+        languages = [
+          { label: 'English (US)',     value: 'en',     emoji: '🇺🇸' },
+          { label: 'Español (MX)',    value: 'es-MX',  emoji: '🇲🇽' },
+          { label: 'Français',        value: 'fr',     emoji: '🇨🇦' }
+        ];
+        break;
+
+      case 'middle_east_africa':
+        languages = [
+          { label: 'العربية',         value: 'ar',     emoji: '🇸🇦' },
+          { label: 'فارسی',           value: 'fa',     emoji: '🇮🇷' },
+          { label: 'Türkçe',          value: 'tr',     emoji: '🇹🇷' }
+          // 必要に応じて他の言語を追加（合計 25 個以下に）
+        ];
+        break;
+
+      case 'south_america':
+        languages = [
+          { label: 'Español (CO)',    value: 'es-CO', emoji: '🇨🇴' },
+          { label: 'Español (AR)',    value: 'es-AR', emoji: '🇦🇷' },
+          { label: 'Português (BR)',  value: 'pt-BR', emoji: '🇧🇷' }
+        ];
+        break;
+
+      case 'oceania':
+        languages = [
+          { label: 'English (AU)',    value: 'en-AU', emoji: '🇦🇺' },
+          { label: 'English (NZ)',    value: 'en-NZ', emoji: '🇳🇿' }
+        ];
+        break;
+
+      default:
+        languages = [
+          { label: 'English (US)',    value: 'en',    emoji: '🇺🇸' },
+          { label: '日本語',           value: 'ja',    emoji: '🇯🇵' }
+        ];
+        break;
+    }
+
+    const selectLanguages = new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId('select_help_language')
+        .setPlaceholder('言語を選択してください')
+        .addOptions(
+          languages.map((l) => ({
+            label: l.label,
+            value: l.value,
+            emoji: l.emoji
+          }))
+        )
+    );
+
+    await interaction.update({
+      content: '📖 続いて、言語を選択してください。',
+      components: [selectLanguages]
+    });
+    return;
+  }
+
+  // C) 言語選択後：HELP_TEXTS から該当言語の本文を返す
+  if (
+    interaction.isStringSelectMenu() &&
+    interaction.customId === 'select_help_language'
+  ) {
+    const { HELP_TEXTS } = await import(
+      path.join(__dirname, 'commands', 'help.js')
+    );
     const selectedLang = interaction.values[0];
     const helpText = HELP_TEXTS[selectedLang] || HELP_TEXTS['en'];
 
@@ -268,34 +375,35 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  // ────────────────────────────────────────────────
-  // 3) /setup, /profile, /ranking などの既存コマンド処理
-  // ────────────────────────────────────────────────
-  if (!interaction.isChatInputCommand()) return;
-
-  switch (interaction.commandName) {
-    case 'setup':
-      return handleSetup(interaction);
-
-    case 'profile':
-      return handleProfile(interaction);
-
-    case 'ranking':
-      return handleRanking(interaction);
-
-    // 他のコマンドがあればここに追加…
+  // D) /setup, /profile, /ranking などの既存コマンド処理
+  if (interaction.isChatInputCommand()) {
+    switch (interaction.commandName) {
+      case 'setup':
+        return handleSetup(interaction);
+      case 'profile':
+        return handleProfile(interaction);
+      case 'ranking':
+        return handleRanking(interaction);
+      // 他のコマンドがあればここに追加
+    }
   }
 });
 
-/* ---------- MessageCreate: カウント＆HUBリレー ---------- */
+//
+// ────────────────────────────────────────────────────────────────
+//  MessageCreate イベント：メッセージ数カウント & HUB へリレー
+// ────────────────────────────────────────────────────────────────
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
 
   // 累計メッセージ数をインクリメント
   await redis.incrby(kMsg(message.author.id), 1);
 
-  // HUB経由でリレーすべきチャンネルかチェック
-  const regKey = JSON.stringify({ guildId: message.guildId, channelId: message.channelId });
+  // HUB 経由でリレーすべきチャンネルかチェック
+  const regKey = JSON.stringify({
+    guildId: message.guildId,
+    channelId: message.channelId
+  });
   if (!(await redis.sismember('global:channels', regKey))) return;
 
   const tz = (await redis.hget(`tz:${message.guildId}`, 'tz')) || '0';
@@ -316,7 +424,10 @@ client.on(Events.MessageCreate, async (message) => {
         originTz: tz,
         content: message.content,
         sentAt: Date.now(),
-        files: message.attachments.map((a) => ({ attachment: a.url, name: a.name })),
+        files: message.attachments.map((a) => ({
+          attachment: a.url,
+          name: a.name
+        })),
         targetLang,
         userId: message.author.id
       })
@@ -326,13 +437,16 @@ client.on(Events.MessageCreate, async (message) => {
   }
 });
 
-/* ---------- MessageReactionAdd: いいね & 翻訳 ---------- */
+//
+// ────────────────────────────────────────────────────────────────
+//  MessageReactionAdd イベント：👍 カウント & 国旗翻訳
+// ────────────────────────────────────────────────────────────────
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   if (user.bot) return;
 
   const emoji = reaction.emoji.name;
 
-  // 👍 をカウント
+  // ── 👍 をカウント
   if (emoji === '👍' && reaction.message.author?.id === client.user.id) {
     const setKey = `like_set:${reaction.message.id}`;
     if (await redis.sismember(setKey, user.id)) return;
@@ -352,7 +466,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     return;
   }
 
-  // 国旗リアクション翻訳
+  // ── 国旗リアクション翻訳
   const targetLang = FLAG_TO_LANG[emoji];
   if (!targetLang) return;
   const originalText = reaction.message.content;
@@ -373,9 +487,13 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
   }
 });
 
-/* ---------- Express: /relay エンドポイント ---------- */
+//
+// ────────────────────────────────────────────────────────────────
+//  Express: /relay エンドポイント & ヘルスチェック
+// ────────────────────────────────────────────────────────────────
 const app = express();
 app.use(bodyParser.json());
+
 app.post('/relay', async (req, res) => {
   try {
     const m = req.body;
@@ -407,12 +525,16 @@ app.post('/relay', async (req, res) => {
     res.sendStatus(500);
   }
 });
+
 app.get('/healthz', (_, res) => res.send('OK'));
 app.listen(process.env.PORT || 3000, () =>
   console.log('🚦 relay on', process.env.PORT || 3000)
 );
 
-/* ---------- Discord ログイン ---------- */
+//
+// ────────────────────────────────────────────────────────────────
+//  Discord ログイン
+// ────────────────────────────────────────────────────────────────
 client
   .login(process.env.DISCORD_TOKEN)
   .then(() => console.log('✅ Logged in'))
