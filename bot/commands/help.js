@@ -2704,7 +2704,7 @@ export const HELP_TEXTS = {
 export default {
   data: new SlashCommandBuilder()
     .setName('help')
-    .setDescription('全26言語に対応したヘルプを表示します'),
+    .setDescription('Get help in 26 languages'),
 
   async execute(interaction) {
     // 言語選択用セレクトメニューを生成
@@ -2741,7 +2741,7 @@ export default {
       .addComponents(
         new StringSelectMenuBuilder()
           .setCustomId('select_help_language')
-          .setPlaceholder('表示する言語を選択してください')
+          .setPlaceholder('Please select the language you want to display')
           .addOptions(
             options.map(opt => ({
               label: opt.label,
@@ -2752,7 +2752,7 @@ export default {
       );
 
     await interaction.reply({
-      content: 'ヘルプを表示する言語を選んでください。',
+      content: 'Please select the language you want to display.',
       components: [selectMenu],
       ephemeral: true,
     });
