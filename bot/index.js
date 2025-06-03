@@ -201,23 +201,23 @@ client.on(Events.InteractionCreate, async (i) => {
   /* ----- A) /help 1st step: region select --------------------- */
   if (i.isChatInputCommand() && i.commandName === 'help') {
     const regions = [
-      { label: 'アジア', value: 'asia', emoji: '🌏' },
-      { label: 'ヨーロッパ', value: 'europe', emoji: '🌍' },
-      { label: '北アメリカ', value: 'north_america', emoji: '🌎' },
-      { label: '中東・アフリカ', value: 'middle_east_africa', emoji: '🕊️' },
-      { label: '南アメリカ', value: 'south_america', emoji: '🌎' },
-      { label: 'オセアニア', value: 'oceania', emoji: '🌏' }
+      { label: 'Asia', value: 'asia', emoji: '🌏' },
+      { label: 'Europe', value: 'europe', emoji: '🌍' },
+      { label: 'North America', value: 'north_america', emoji: '🌎' },
+      { label: 'Middle East & Africa', value: 'middle_east_africa', emoji: '🕊️' },
+      { label: 'South America', value: 'south_america', emoji: '🌎' },
+      { label: 'Oceania', value: 'oceania', emoji: '🌏' }
     ];
 
     const selectRegion = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId('help_region')
-        .setPlaceholder('まずは地域を選択してください')
+        .setPlaceholder('Please select your region first')
         .addOptions(regions)
     );
 
     await i.reply({
-      content: '🔎 ヘルプを表示したい「地域」を選択してください。',
+      content: '🔎 Please select the region you want help with.',
       components: [selectRegion],
       flags: MessageFlags.Ephemeral
     });
@@ -303,12 +303,12 @@ client.on(Events.InteractionCreate, async (i) => {
     const selectLang = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId('help_lang')
-        .setPlaceholder('言語を選択してください')
+        .setPlaceholder('Please select a language')
         .addOptions(langs)
     );
 
     await i.update({
-      content: '📖 続いて、ヘルプを表示する言語を選択してください。',
+      content: '📖 Please select the language you want help with.',
       components: [selectLang]
     });
     return;
