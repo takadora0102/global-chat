@@ -1,30 +1,43 @@
 /**
- * deploy-commands.js – 4 slash commands をグローバル登録
+ * deploy-commands.js  –  Robust version
+ *   • “commands” フォルダ内の .js を走査
+ *   • default export に data が無ければスキップ
+ *   • 4 コマンド (/setup, /profile, /ranking, /help) だけを登録
  *
- * 必須 env: DISCORD_TOKEN, CLIENT_ID
+ * 必要環境変数:
+ *   DISCORD_TOKEN, CLIENT_ID
  */
 
 import { REST, Routes } from 'discord.js';
-import fs from 'node:fs';
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import 'dotenv/config';
 
+/* ------------- 収集 ------------- */
 const commands = [];
+const dir = path.join(process.cwd(), 'commands');
 
-/* コマンドファイルを読み込み */
-const commandsPath = path.join(process.cwd(), 'commands');
-for (const file of fs.readdirSync(commandsPath)) {
+for (const file of readdirSync(dir)) {
   if (!file.endsWith('.js')) continue;
-  const { default: cmd } = await import(path.join(commandsPath, file));
-  commands.push(cmd.data.toJSON());
+  const { default: cmd } = await import(path.join(dir, file));
+  if (cmd?.data?.toJSON) {
+    commands.push(cmd.data.toJSON());
+    console.log(`✔︎ Loaded slash command: ${cmd.data.name}`);
+  } else {
+    console.warn(`⚠︎ Skip non-command file: ${file}`);
+  }
 }
 
-/* REST で PUT */
+/* ------------- REST put ------------- */
 const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-try {
-  console.log(`🚀 Refreshing global slash commands (${commands.length}) …`);
-  await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
-  console.log('✅ Commands refreshed');
-} catch (err) {
-  console.error(err);
-}
+
+(async () => {
+  try {
+    console.log(`🚀 Deploying ${commands.length} global slash commands…`);
+    await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
+    console.log('✅ Slash commands deployed successfully');
+  } catch (err) {
+    console.error('❌ Deployment failed:', err);
+    process.exit(1);
+  }
+})();
