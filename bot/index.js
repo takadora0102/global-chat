@@ -1,10 +1,11 @@
 /**
- * index.js – Global Chat Bot (2025-06 修正版)
+ * index.js – Global Chat Bot (2025-06 修正版：ヘルプをテキスト分割で送信)
  *
  * 変更点
  * ────────────────────────────────────────────────────────────
  * • /help は「地域 → 言語」の 2 段階セレクトメニュー（返信は即時 reply）
- * • /setup, /profile, /ranking は最初に deferReply() を行い、重い処理後に editReply()
+ * • /help 最終段階ではヘルプ本文を 2,000 文字ごとに分割してテキスト送信
+ * • /setup, /profile, /ranking は deferReply() → editReply() で実装
  * • 25 件上限を超えないよう言語を地域ごとに分割
  * • interaction.reply には flags: MessageFlags.Ephemeral を使用
  * • コンポーネント応答は update() を使用
@@ -19,7 +20,6 @@ import {
   PermissionFlagsBits,
   MessageFlags,
   ChannelType,
-  EmbedBuilder,
   ActionRowBuilder,
   StringSelectMenuBuilder
 } from 'discord.js';
@@ -87,25 +87,22 @@ async function translate(text, tl) {
    /setup ハンドラ
 ─────────────────────────────────────────────── */
 async function handleSetup(interaction) {
-  // 3秒以内に最初の応答を返す
+  // 3秒以内に応答を deferred
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
     return interaction.editReply({
       content: '❌ You need Administrator permission.',
-      embeds: [],
       components: []
     });
   }
 
   const guild = interaction.guild;
-  // 1. Global Chat カテゴリを作成
   const category = await guild.channels.create({
     name: 'Global Chat',
     type: ChannelType.GuildCategory
   });
 
-  // 2. テキストチャンネル 3 つを作成
   const botAnnouncements = await guild.channels.create({
     name: 'bot-announcements',
     type: ChannelType.GuildText,
@@ -122,11 +119,9 @@ async function handleSetup(interaction) {
     parent: category.id
   });
 
-  // 3. Redis セットに追加
   const regKey = JSON.stringify({ guildId: guild.id, channelId: globalChat.id });
   await redis.sadd('global:channels', regKey);
 
-  // 4. 中央 HUB に登録リクエスト
   try {
     await fetch(`${process.env.HUB_ENDPOINT}/register`, {
       method: 'POST',
@@ -137,10 +132,8 @@ async function handleSetup(interaction) {
     console.error('HUB register failed:', e);
   }
 
-  // 完了メッセージを editReply で送信
   return interaction.editReply({
     content: '✅ Global Chat setup complete!',
-    embeds: [],
     components: []
   });
 }
@@ -149,7 +142,6 @@ async function handleSetup(interaction) {
    /profile ハンドラ
 ─────────────────────────────────────────────── */
 async function handleProfile(interaction) {
-  // 3秒以内に最初の応答を返す
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const userId = interaction.user.id;
@@ -157,15 +149,9 @@ async function handleProfile(interaction) {
   const likeCount = (await redis.get(kLike(userId))) || '0';
 
   return interaction.editReply({
-    content: null,
-    embeds: [
-      new EmbedBuilder()
-        .setTitle(`📊 ${interaction.user.tag}`)
-        .addFields(
-          { name: 'Messages Sent', value: `${msgCount}`, inline: true },
-          { name: 'Likes Received', value: `${likeCount}`, inline: true }
-        )
-    ],
+    content: `📊 **${interaction.user.tag}**\n\n` +
+             `• Messages Sent: ${msgCount}\n` +
+             `• Likes Received: ${likeCount}`,
     components: []
   });
 }
@@ -174,13 +160,11 @@ async function handleProfile(interaction) {
    /ranking ハンドラ
 ─────────────────────────────────────────────── */
 async function handleRanking(interaction) {
-  // 3秒以内に最初の応答を返す
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const mode = interaction.options.getSubcommand(); // 'messages' or 'likes'
   const pattern = mode === 'messages' ? 'msg_cnt:*' : 'like_cnt:*';
 
-  // Redis のキー一覧を取得し、ユーザーごとの値を集計
   const keys = await redis.keys(pattern);
   const arr = [];
   for (const k of keys) {
@@ -190,24 +174,19 @@ async function handleRanking(interaction) {
   }
   arr.sort((a, b) => b.v - a.v).splice(10);
 
-  const lines = await Promise.all(
-    arr.map(async (r, idx) => {
-      try {
-        const u = await client.users.fetch(r.id);
-        return `**#${idx + 1}** ${u.tag} – ${r.v}`;
-      } catch {
-        return `**#${idx + 1}** (unknown) – ${r.v}`;
-      }
-    })
-  );
+  let response = `🏆 **Top 10 by ${mode}**\n\n`;
+  for (let i = 0; i < arr.length; i++) {
+    try {
+      const u = await client.users.fetch(arr[i].id);
+      response += `#${i + 1} – ${u.tag} (${arr[i].v})\n`;
+    } catch {
+      response += `#${i + 1} – (unknown) (${arr[i].v})\n`;
+    }
+  }
+  if (arr.length === 0) response += 'No data';
 
   return interaction.editReply({
-    content: null,
-    embeds: [
-      new EmbedBuilder()
-        .setTitle(`🏆 Top 10 by ${mode}`)
-        .setDescription(lines.join('\n') || 'No data')
-    ],
+    content: response,
     components: []
   });
 }
@@ -216,7 +195,6 @@ async function handleRanking(interaction) {
    InteractionCreate
 ─────────────────────────────────────────────── */
 client.on(Events.InteractionCreate, async (i) => {
-  // このファイルの __dirname を取得
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
 
@@ -235,16 +213,9 @@ client.on(Events.InteractionCreate, async (i) => {
       new StringSelectMenuBuilder()
         .setCustomId('help_region')
         .setPlaceholder('まずは地域を選択してください')
-        .addOptions(
-          regions.map((r) => ({
-            label: r.label,
-            value: r.value,
-            emoji: r.emoji
-          }))
-        )
+        .addOptions(regions)
     );
 
-    // 軽量処理なので直接 reply()
     await i.reply({
       content: '🔎 ヘルプを表示したい「地域」を選択してください。',
       components: [selectRegion],
@@ -336,7 +307,6 @@ client.on(Events.InteractionCreate, async (i) => {
         .addOptions(langs)
     );
 
-    // 「言語選択」に差し替え
     await i.update({
       content: '📖 続いて、ヘルプを表示する言語を選択してください。',
       components: [selectLang]
@@ -344,24 +314,34 @@ client.on(Events.InteractionCreate, async (i) => {
     return;
   }
 
-  /* ----- C) /help final: show help text ---------------------- */
+  /* ----- C) /help final: テキストを 2000 文字ごとに分割して送信 ----- */
   if (i.isStringSelectMenu() && i.customId === 'help_lang') {
     const { HELP_TEXTS } = await import(
       path.join(path.dirname(fileURLToPath(import.meta.url)), 'commands', 'help.js')
     );
     const lang = i.values[0];
-    const help = HELP_TEXTS[lang] || HELP_TEXTS['en'];
+    const fullText = HELP_TEXTS[lang] || HELP_TEXTS['en'];
 
-    const embed = new EmbedBuilder()
-      .setTitle('Global Chat Bot Help')
-      .setDescription(help)
-      .setColor('#00AAFF');
+    // Discord の通常メッセージは最大 2000 文字 → それを超えたら分割
+    const MAX_TEXT = 2000;
+    const parts = [];
+    for (let idx = 0; idx < fullText.length; idx += MAX_TEXT) {
+      parts.push(fullText.slice(idx, idx + MAX_TEXT));
+    }
 
+    // 最初のパートは update() で差し替え（元のセレクト付きメッセージを消す）
     await i.update({
-      content: null,
-      embeds: [embed],
+      content: parts[0],
       components: []
     });
+
+    // 残りのパートは followUp() で順に送信（ephemeral のまま）
+    for (let j = 1; j < parts.length; j++) {
+      await i.followUp({
+        content: parts[j],
+        flags: MessageFlags.Ephemeral
+      });
+    }
     return;
   }
 
@@ -374,7 +354,7 @@ client.on(Events.InteractionCreate, async (i) => {
         return handleProfile(i);
       case 'ranking':
         return handleRanking(i);
-      // もし later add another command, handle here
+      // 他のコマンドがあればここに追加…
     }
   }
 });
@@ -385,10 +365,8 @@ client.on(Events.InteractionCreate, async (i) => {
 client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) return;
 
-  // 累計メッセージ数をインクリメント
   await redis.incrby(kMsg(message.author.id), 1);
 
-  // グローバルチャット登録済みかチェック
   const regKey = JSON.stringify({
     guildId: message.guildId,
     channelId: message.channelId
@@ -432,7 +410,7 @@ client.on(Events.MessageCreate, async (message) => {
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   if (user.bot) return;
 
-  // 👍 like カウント
+  // 👍 Like カウント
   if (reaction.emoji.name === '👍' && reaction.message.author?.id === client.user.id) {
     const setKey = `like_set:${reaction.message.id}`;
     if (await redis.sismember(setKey, user.id)) return;
