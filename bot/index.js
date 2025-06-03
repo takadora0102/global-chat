@@ -9,7 +9,7 @@
  * • タイムゾーン → セレクトでオフセットを選ぶと Redis に { tz } を保存
  * • サポートサーバーの URL をボタンで表示（環境変数 SUPPORT_SERVER_URL）
  * • /setup, /profile, /ranking は deferReply → editReply で実装
- * • 25 件上限を超えないよう言語を地域別に分割
+ * • 25 件上限を超えないよう言語を 25 個以下に、タイムゾーンを 25 個以下に削減
  * • interaction.reply には flags: MessageFlags.Ephemeral を使用
  * • コンポーネント応答は update / deferUpdate / followUp 後に editReply で統一
  */
@@ -78,7 +78,6 @@ const client = new Client({
 const kMsg = (id) => `msg_cnt:${id}`;
 const kLike = (id) => `like_cnt:${id}`;
 
-// 翻訳ヘルパー（flag翻訳用／help用ではない）
 async function translate(text, tl) {
   const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${tl}&dt=t&q=${encodeURIComponent(
     text
@@ -93,10 +92,8 @@ async function translate(text, tl) {
    /setup ハンドラ
 ─────────────────────────────────────────────── */
 async function handleSetup(interaction) {
-  // 3 秒以内に応答を deferred
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-  // 管理者権限チェック
   if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
     return interaction.editReply({
       content: '❌ You need Administrator permission to run `/setup`.',
@@ -147,45 +144,38 @@ async function handleSetup(interaction) {
   }
 
   // 5) settings チャンネルに「自動翻訳／タイムゾーン設定用メッセージ」を送信
-  //    ・言語セレクト：26 言語対応
-  //    ・タイムゾーンセレクト：UTC-12 〜 UTC+14
-  //    ・サポートサーバー URL ボタン
 
-  // ── 言語オプション一覧 (26 言語)
+  // ── 言語オプション一覧 (25 言語に削減)
   const languageOptions = [
-    { label: '日本語',         value: 'ja',     emoji: '🇯🇵' },
-    { label: 'English (US)',   value: 'en',     emoji: '🇺🇸' },
-    { label: 'English (UK)',   value: 'en-GB',  emoji: '🇬🇧' },
-    { label: '中文 (简体)',      value: 'zh',     emoji: '🇨🇳' },
-    { label: '中文 (繁體)',     value: 'zh-TW',  emoji: '🇹🇼' },
-    { label: '한국어',        value: 'ko',     emoji: '🇰🇷' },
-    { label: 'Español (ES)',  value: 'es',     emoji: '🇪🇸' },
-    { label: 'Español (CO)',  value: 'es-CO',  emoji: '🇨🇴' },
-    { label: 'Español (MX)',  value: 'es-MX',  emoji: '🇲🇽' },
-    { label: 'Français',      value: 'fr',     emoji: '🇫🇷' },
-    { label: 'Deutsch',       value: 'de',     emoji: '🇩🇪' },
-    { label: 'Português',     value: 'pt',     emoji: '🇵🇹' },
-    { label: 'Português (BR)', value: 'pt-BR', emoji: '🇧🇷' },
-    { label: 'Русский',       value: 'ru',     emoji: '🇷🇺' },
-    { label: 'Українська',    value: 'uk',     emoji: '🇺🇦' },
-    { label: 'ελληνικά',       value: 'el',     emoji: '🇬🇷' },
-    { label: 'עברית',         value: 'he',     emoji: '🇮🇱' },
-    { label: 'اردو',          value: 'ur',     emoji: '🇵🇰' },
-    { label: 'فارسی',         value: 'fa',     emoji: '🇮🇷' },
-    { label: 'Bahasa Melayu',  value: 'ms',     emoji: '🇲🇾' },
-    { label: 'Español (CO)',  value: 'es-CO',  emoji: '🇨🇴' }, // 重複しない場合は削除可
-    { label: 'বাংলা',         value: 'bn',     emoji: '🇧🇩' },
-    { label: 'ไทย',           value: 'th',     emoji: '🇹🇭' },
-    { label: 'Tiếng Việt',     value: 'vi',     emoji: '🇻🇳' },
-    { label: 'हिन्दी',        value: 'hi',     emoji: '🇮🇳' },
-    { label: 'Bahasa Indonesia', value: 'id',   emoji: '🇮🇩' },
-    { label: 'العربية',       value: 'ar',     emoji: '🇸🇦' }
+    { label: '日本語',            value: 'ja',     emoji: '🇯🇵' },
+    { label: 'English (US)',      value: 'en',     emoji: '🇺🇸' },
+    { label: 'English (UK)',      value: 'en-GB',  emoji: '🇬🇧' },
+    { label: '中文 (简体)',         value: 'zh',     emoji: '🇨🇳' },
+    { label: '中文 (繁體)',        value: 'zh-TW',  emoji: '🇹🇼' },
+    { label: '한국어',           value: 'ko',     emoji: '🇰🇷' },
+    { label: 'Español',          value: 'es',     emoji: '🇪🇸' },
+    { label: 'Français',         value: 'fr',     emoji: '🇫🇷' },
+    { label: 'Deutsch',          value: 'de',     emoji: '🇩🇪' },
+    { label: 'Português',        value: 'pt',     emoji: '🇵🇹' },
+    { label: 'Português (BR)',    value: 'pt-BR', emoji: '🇧🇷' },
+    { label: 'Русский',           value: 'ru',     emoji: '🇷🇺' },
+    { label: 'Українська',        value: 'uk',     emoji: '🇺🇦' },
+    { label: 'ελληνικά',          value: 'el',     emoji: '🇬🇷' },
+    { label: 'עברית',            value: 'he',     emoji: '🇮🇱' },
+    { label: 'اردو',             value: 'ur',     emoji: '🇵🇰' },
+    { label: 'فارسی',            value: 'fa',     emoji: '🇮🇷' },
+    { label: 'Bahasa Melayu',     value: 'ms',     emoji: '🇲🇾' },
+    { label: 'বাংলা',            value: 'bn',     emoji: '🇧🇩' },
+    { label: 'ไทย',              value: 'th',     emoji: '🇹🇭' },
+    { label: 'Tiếng Việt',        value: 'vi',     emoji: '🇻🇳' },
+    { label: 'हिन्दी',           value: 'hi',     emoji: '🇮🇳' },
+    { label: 'Bahasa Indonesia',  value: 'id',     emoji: '🇮🇩' },
+    { label: 'العربية',          value: 'ar',     emoji: '🇸🇦' }
   ];
 
-  // ── タイムゾーンオプション一覧 (UTC-12 〜 UTC+14)
+  // ── タイムゾーンオプション一覧 (UTC-11 〜 UTC+13, 計25個)
   const tzOptions = [];
-  for (let offset = -12; offset <= 14; offset++) {
-    // ラベル例：UTC+9, UTC-3, UTC+0
+  for (let offset = -11; offset <= 13; offset++) {
     const sign = offset >= 0 ? '+' : '';
     tzOptions.push({
       label: `UTC${sign}${offset}`,
@@ -199,7 +189,6 @@ async function handleSetup(interaction) {
     .setStyle(ButtonStyle.Link)
     .setURL(process.env.SUPPORT_SERVER_URL);
 
-  // セットアップメッセージを送信
   await settings.send({
     content:
       '**Global Chat 設定メニュー**\n\n' +
@@ -225,7 +214,7 @@ async function handleSetup(interaction) {
     ]
   });
 
-  // 6) 最後に /setup 完了メッセージを editReply で返す
+  // 6) /setup 完了メッセージを返す
   return interaction.editReply({
     content: '✅ Global Chat setup complete!',
     components: []
@@ -298,25 +287,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
   //
   if (interaction.isChatInputCommand() && interaction.commandName === 'help') {
     const regions = [
-      { label: 'アジア',          value: 'asia',               emoji: '🌏' },
-      { label: 'ヨーロッパ',      value: 'europe',             emoji: '🌍' },
-      { label: '北アメリカ',      value: 'north_america',      emoji: '🌎' },
-      { label: '中東・アフリカ',   value: 'middle_east_africa', emoji: '🕊️' },
-      { label: '南アメリカ',      value: 'south_america',      emoji: '🌎' },
-      { label: 'オセアニア',      value: 'oceania',            emoji: '🌏' }
+      { label: 'アジア',         value: 'asia',               emoji: '🌏' },
+      { label: 'ヨーロッパ',       value: 'europe',             emoji: '🌍' },
+      { label: '北アメリカ',       value: 'north_america',      emoji: '🌎' },
+      { label: '中東・アフリカ',    value: 'middle_east_africa', emoji: '🕊️' },
+      { label: '南アメリカ',       value: 'south_america',      emoji: '🌎' },
+      { label: 'オセアニア',       value: 'oceania',            emoji: '🌏' }
     ];
 
     const selectRegion = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId('help_region')
         .setPlaceholder('まずは地域を選択してください')
-        .addOptions(
-          regions.map((r) => ({
-            label: r.label,
-            value: r.value,
-            emoji: r.emoji
-          }))
-        )
+        .addOptions(regions)
     );
 
     await interaction.reply({
@@ -340,71 +323,68 @@ client.on(Events.InteractionCreate, async (interaction) => {
     switch (chosenRegion) {
       case 'asia':
         languages = [
-          { label: '日本語',         value: 'ja',    emoji: '🇯🇵' },
-          { label: '中文 (简体)',      value: 'zh',    emoji: '🇨🇳' },
-          { label: '中文 (繁體)',     value: 'zh-TW', emoji: '🇹🇼' },
-          { label: '한국어',        value: 'ko',    emoji: '🇰🇷' },
-          { label: 'हिन्दी',       value: 'hi',    emoji: '🇮🇳' },
-          { label: 'বাংলা',        value: 'bn',    emoji: '🇧🇩' },
-          { label: 'ไทย',          value: 'th',    emoji: '🇹🇭' },
-          { label: 'Tiếng Việt',    value: 'vi',    emoji: '🇻🇳' },
-          { label: 'Bahasa Melayu',  value: 'ms',    emoji: '🇲🇾' },
-          { label: 'Bahasa Indonesia', value: 'id', emoji: '🇮🇩' }
+          { label: '日本語',         value: 'ja',         emoji: '🇯🇵' },
+          { label: '中文 (简体)',      value: 'zh',         emoji: '🇨🇳' },
+          { label: '中文 (繁體)',     value: 'zh-TW',      emoji: '🇹🇼' },
+          { label: '한국어',        value: 'ko',         emoji: '🇰🇷' },
+          { label: 'हिन्दी',       value: 'hi',         emoji: '🇮🇳' },
+          { label: 'বাংলা',        value: 'bn',         emoji: '🇧🇩' },
+          { label: 'ไทย',          value: 'th',         emoji: '🇹🇭' },
+          { label: 'Tiếng Việt',    value: 'vi',         emoji: '🇻🇳' },
+          { label: 'Bahasa Melayu',  value: 'ms',         emoji: '🇲🇾' },
+          { label: 'Bahasa Indonesia', value: 'id',       emoji: '🇮🇩' }
         ];
         break;
 
       case 'europe':
         languages = [
-          { label: 'English (US)',   value: 'en',    emoji: '🇺🇸' },
-          { label: 'English (UK)',   value: 'en-GB', emoji: '🇬🇧' },
-          { label: 'Español (ES)',  value: 'es',    emoji: '🇪🇸' },
-          { label: 'Español (CO)',  value: 'es-CO', emoji: '🇨🇴' },
-          { label: 'Español (MX)',  value: 'es-MX', emoji: '🇲🇽' },
-          { label: 'Français',      value: 'fr',    emoji: '🇫🇷' },
-          { label: 'Deutsch',       value: 'de',    emoji: '🇩🇪' },
-          { label: 'Русский',       value: 'ru',    emoji: '🇷🇺' },
-          { label: 'Українська',    value: 'uk',    emoji: '🇺🇦' },
-          { label: 'ελληνικά',       value: 'el',    emoji: '🇬🇷' },
-          { label: 'العربية',      value: 'ar',    emoji: '🇸🇦' }
+          { label: 'English (US)',   value: 'en',        emoji: '🇺🇸' },
+          { label: 'English (UK)',   value: 'en-GB',     emoji: '🇬🇧' },
+          { label: 'Español',       value: 'es',        emoji: '🇪🇸' },
+          { label: 'Français',       value: 'fr',        emoji: '🇫🇷' },
+          { label: 'Deutsch',        value: 'de',        emoji: '🇩🇪' },
+          { label: 'Русский',        value: 'ru',        emoji: '🇷🇺' },
+          { label: 'Українська',     value: 'uk',        emoji: '🇺🇦' },
+          { label: 'ελληνικά',        value: 'el',        emoji: '🇬🇷' },
+          { label: 'עברית',         value: 'he',        emoji: '🇮🇱' },
+          { label: 'العربية',       value: 'ar',        emoji: '🇸🇦' }
         ];
         break;
 
       case 'north_america':
         languages = [
-          { label: 'English (US)',  value: 'en',    emoji: '🇺🇸' },
-          { label: 'Español (MX)',  value: 'es-MX', emoji: '🇲🇽' },
-          { label: 'Français',      value: 'fr',    emoji: '🇨🇦' }
+          { label: 'English (US)',   value: 'en',        emoji: '🇺🇸' },
+          { label: 'Español',       value: 'es',        emoji: '🇪🇸' },
+          { label: 'Français',       value: 'fr',        emoji: '🇨🇦' }
         ];
         break;
 
       case 'middle_east_africa':
         languages = [
-          { label: 'العربية',      value: 'ar',    emoji: '🇸🇦' },
-          { label: 'فارسی',        value: 'fa',    emoji: '🇮🇷' },
-          { label: 'Türkçe',       value: 'tr',    emoji: '🇹🇷' }
+          { label: 'العربية',       value: 'ar',        emoji: '🇸🇦' },
+          { label: 'فارسی',         value: 'fa',        emoji: '🇮🇷' },
+          { label: 'Türkçe',        value: 'tr',        emoji: '🇹🇷' }
         ];
         break;
 
       case 'south_america':
         languages = [
-          { label: 'Español (CO)', value: 'es-CO', emoji: '🇨🇴' },
-          { label: 'Español (AR)', value: 'es-AR', emoji: '🇦🇷' },
-          { label: 'Português (BR)', value: 'pt-BR', emoji: '🇧🇷' }
+          { label: 'Español',       value: 'es',        emoji: '🇪🇸' },
+          { label: 'Português (BR)', value: 'pt-BR',    emoji: '🇧🇷' }
         ];
         break;
 
       case 'oceania':
         languages = [
-          { label: 'English (AU)', value: 'en-AU', emoji: '🇦🇺' },
-          { label: 'English (NZ)', value: 'en-NZ', emoji: '🇳🇿' }
+          { label: 'English (AU)',  value: 'en-AU',     emoji: '🇦🇺' },
+          { label: 'English (NZ)',  value: 'en-NZ',     emoji: '🇳🇿' }
         ];
         break;
 
       default:
-        // フェールバック
         languages = [
-          { label: 'English (US)', value: 'en',    emoji: '🇺🇸' },
-          { label: '日本語',       value: 'ja',    emoji: '🇯🇵' }
+          { label: 'English (US)',   value: 'en',        emoji: '🇺🇸' },
+          { label: '日本語',         value: 'ja',        emoji: '🇯🇵' }
         ];
         break;
     }
@@ -413,13 +393,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       new StringSelectMenuBuilder()
         .setCustomId('help_lang')
         .setPlaceholder('言語を選択してください')
-        .addOptions(
-          languages.map((l) => ({
-            label: l.label,
-            value: l.value,
-            emoji: l.emoji
-          }))
-        )
+        .addOptions(languages)
     );
 
     await interaction.update({
@@ -476,25 +450,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return handleProfile(interaction);
       case 'ranking':
         return handleRanking(interaction);
-      // 他のコマンドがあればここに追加
     }
   }
 
   //
-  // E) 「自動翻訳（サーバー全体のデフォルト言語）設定」のハンドラ
+  // E) 自動翻訳設定（サーバー全体のデフォルト言語）
   //
   if (
     interaction.isStringSelectMenu() &&
     interaction.customId === 'set_default_lang'
   ) {
-    // サーバー ID を取得
     const guildId = interaction.guildId;
-    const chosenLang = interaction.values[0]; // 例: 'ja', 'en', 'zh' など
+    const chosenLang = interaction.values[0];
 
-    // Redis の lang:<guildId> に { lang: <chosenLang>, auto: 'true' } を保存
     await redis.hset(`lang:${guildId}`, { lang: chosenLang, auto: 'true' });
 
-    // 完了メッセージを返す
     return interaction.reply({
       content: `✅ デフォルト言語を **${chosenLang}** に設定しました。以降、自動翻訳が有効になります。`,
       flags: MessageFlags.Ephemeral
@@ -502,29 +472,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 
   //
-  // F) 「タイムゾーン設定」のハンドラ
+  // F) タイムゾーン設定
   //
   if (
     interaction.isStringSelectMenu() &&
     interaction.customId === 'set_timezone'
   ) {
-    // サーバー ID を取得
     const guildId = interaction.guildId;
-    const chosenTz = interaction.values[0]; // 例: '-5', '9' などの文字列
+    const chosenTz = interaction.values[0]; // 例: '-5' や '9'
 
-    // Redis の tz:<guildId> に { tz: <chosenTz> } を保存
     await redis.hset(`tz:${guildId}`, { tz: chosenTz });
 
-    // 完了メッセージを返す
     return interaction.reply({
       content: `✅ タイムゾーンを **UTC${chosenTz >= 0 ? '+' + chosenTz : chosenTz}** に設定しました。`,
       flags: MessageFlags.Ephemeral
     });
   }
-
-  //
-  // G) /profile, /ranking のほか特になければ何もしない
-  //
 });
 
 /* ───────────────────────────────────────────────
@@ -582,7 +545,7 @@ client.on(Events.MessageCreate, async (message) => {
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   if (user.bot) return;
 
-  // ── 👍 カウント処理 (Bot がリレーで投げたメッセージへのリアクション)
+  // 👍 Like カウント
   if (reaction.emoji.name === '👍' && reaction.message.author?.id === client.user.id) {
     const setKey = `like_set:${reaction.message.id}`;
     if (await redis.sismember(setKey, user.id)) return;
@@ -601,7 +564,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     return;
   }
 
-  // ── 国旗リアクション翻訳
+  // 国旗リアクション翻訳
   const targetLang = FLAG_TO_LANG[reaction.emoji.name];
   if (!targetLang) return;
   const originalText = reaction.message.content;
