@@ -91,90 +91,93 @@ function buildRelayEmbed({ userTag, originGuild, tz, userAvatar, content, userId
 /* ────────── /setup コマンド ────────── */
 async function handleSetup(interaction) {
   try {
-    /* 1) 3 秒内に deferReply */
+    /* 1) 必ず 3 秒以内に deferReply してタイムアウト防止 */
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+    /* 2) 権限チェック */
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
       return interaction.editReply('❌ You need Administrator permission to run this command.');
     }
 
-    /* 2) “Global Chat” カテゴリ */
+    /* 3) 「Global Chat」カテゴリを作成 */
     const category = await interaction.guild.channels.create({
       name: 'Global Chat',
       type: ChannelType.GuildCategory
     });
 
-    /* 3) bot-announcements (GuildAnnouncement) */
+    /* 4) bot-announcements（TEXT チャンネルとして作成） */
     const botAnnouncements = await interaction.guild.channels.create({
-      name: 'bot-announcements',
-      type: ChannelType.GuildAnnouncement,
+      name : 'bot-announcements',
+      type : ChannelType.GuildText,              // ←★ TEXT に固定
       parent: category.id,
       permissionOverwrites: [
         {
-          id: interaction.guild.roles.everyone.id,
+          id  : interaction.guild.roles.everyone.id,
           deny: [PermissionFlagsBits.SendMessages],
           type: OverwriteType.Role
         }
       ]
     });
 
-    /* 4) サポート側 Announcement → addFollower */
+    /* 5) サポート側 Announcement → addFollower(botAnnouncements.id) */
     try {
-      const src = await client.channels.fetch(NEWS_SOURCE);
+      const src = await client.channels.fetch(process.env.NEWS_SOURCE);
       if (src?.type === ChannelType.GuildAnnouncement && src.addFollower) {
         await src.addFollower(botAnnouncements.id, 'auto-follow');
         console.log('✓ followed support announcement');
       } else {
-        console.warn('⚠ NEWS_SOURCE is not Announcement');
+        console.warn('⚠ NEWS_SOURCE is not an Announcement channel');
       }
-    } catch (e) {
-      console.error('follow failed:', e);
+    } catch (err) {
+      console.error('follow failed:', err);
     }
 
-    /* 5) global-chat */
+    /* 6) global-chat (テキストチャンネル) */
     const globalChat = await interaction.guild.channels.create({
-      name: 'global-chat',
-      type: ChannelType.GuildText,
+      name  : 'global-chat',
+      type  : ChannelType.GuildText,
       parent: category.id
     });
 
-    /* 6) settings (管理者のみ閲覧) */
+    /* 7) settings (管理者のみ閲覧) */
     const settings = await interaction.guild.channels.create({
-      name: 'settings',
-      type: ChannelType.GuildText,
+      name  : 'settings',
+      type  : ChannelType.GuildText,
       parent: category.id,
       permissionOverwrites: [
         {
-          id: interaction.guild.roles.everyone.id,
+          id  : interaction.guild.roles.everyone.id,
           deny: [PermissionFlagsBits.ViewChannel],
           type: OverwriteType.Role
         }
       ]
     });
 
-    /* 7) Redis & HUB 登録 */
+    /* 8) Redis へ登録 & HUB へ通知 */
     await redis.sadd(
       'global:channels',
       JSON.stringify({ guildId: interaction.guild.id, channelId: globalChat.id })
     );
     fetch(process.env.HUB_ENDPOINT + '/register', {
-      method: 'POST',
+      method : 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ guildId: interaction.guild.id, channelId: globalChat.id })
+      body   : JSON.stringify({ guildId: interaction.guild.id, channelId: globalChat.id })
     }).catch((e) => console.error('register error:', e));
 
-    /* 8) settings メッセージ & UI (ActionRow 4 行) */
+    /* 9) settings チャンネルに UI メッセージを送信 */
     const langOpts = [
       ['English (US)', 'en', '🇺🇸'],
-      ['日本語', 'ja', '🇯🇵'],
-      ['中文(简体)', 'zh', '🇨🇳'],
-      ['Español', 'es', '🇪🇸'],
-      ['Français', 'fr', '🇫🇷'],
-      ['Deutsch', 'de', '🇩🇪']
-    ].map(([l, v, e]) => ({ label: l, value: v, emoji: e }));
+      ['日本語',        'ja', '🇯🇵'],
+      ['中文(简体)',    'zh', '🇨🇳'],
+      ['Español',      'es', '🇪🇸'],
+      ['Français',     'fr', '🇫🇷'],
+      ['Deutsch',      'de', '🇩🇪']
+    ].map(([label, value, emoji]) => ({ label, value, emoji }));
 
     const tzOpts = [];
-    for (let o = -11; o <= 13; o++) tzOpts.push({ label: `UTC${o >= 0 ? '+' + o : o}`, value: '' + o });
+    for (let o = -11; o <= 13; o++) {
+      tzOpts.push({ label: `UTC${o >= 0 ? '+' + o : o}`, value: String(o) });
+    }
 
     const rowLang = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
@@ -189,12 +192,24 @@ async function handleSetup(interaction) {
         .addOptions(tzOpts)
     );
     const rowAuto = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('autotrans_on').setLabel('Auto-Translate ON').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId('autotrans_off').setLabel('OFF').setStyle(ButtonStyle.Danger)
+      new ButtonBuilder()
+        .setCustomId('autotrans_on')
+        .setLabel('Auto-Translate ON')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId('autotrans_off')
+        .setLabel('OFF')
+        .setStyle(ButtonStyle.Danger)
     );
     const rowMisc = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId('detect_timezone').setLabel('Detect TZ').setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setURL(process.env.SUPPORT_SERVER_URL).setLabel('Support').setStyle(ButtonStyle.Link)
+      new ButtonBuilder()
+        .setCustomId('detect_timezone')
+        .setLabel('Detect TZ')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setURL(process.env.SUPPORT_SERVER_URL)
+        .setLabel('Support')
+        .setStyle(ButtonStyle.Link)
     );
 
     await settings.send({
@@ -207,15 +222,16 @@ async function handleSetup(interaction) {
       components: [rowLang, rowTZ, rowAuto, rowMisc]
     });
 
-    /* 9) 完了 */
+    /* 10) 完了通知 */
     await interaction.editReply('✅ Setup completed successfully!');
-  } catch (e) {
-    console.error('setup error:', e);
+  } catch (err) {
+    console.error('setup error:', err);
     if (interaction.deferred) {
       await interaction.editReply('❌ Setup failed. Check permissions & ENV.');
     }
   }
 }
+
 
 /* ────────── /profile ────────── */
 async function handleProfile(interaction) {
