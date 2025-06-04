@@ -91,10 +91,10 @@ function buildRelayEmbed({ userTag, originGuild, tz, userAvatar, content, userId
 /* ────────── /setup コマンド ────────── */
 async function handleSetup(interaction) {
   try {
-    /* 1) 必ず 3 秒以内に deferReply してタイムアウト防止 */
+    /* 1) 3 秒以内に deferReply（タイムアウト防止） */
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    /* 2) 権限チェック */
+    /* 2) 管理者権限チェック */
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
       return interaction.editReply('❌ You need Administrator permission to run this command.');
     }
@@ -105,10 +105,10 @@ async function handleSetup(interaction) {
       type: ChannelType.GuildCategory
     });
 
-    /* 4) bot-announcements（TEXT チャンネルとして作成） */
+    /* 4) bot-announcements ― テキストチャンネル */
     const botAnnouncements = await interaction.guild.channels.create({
       name : 'bot-announcements',
-      type : ChannelType.GuildText,              // ←★ TEXT に固定
+      type : ChannelType.GuildText,
       parent: category.id,
       permissionOverwrites: [
         {
@@ -132,14 +132,14 @@ async function handleSetup(interaction) {
       console.error('follow failed:', err);
     }
 
-    /* 6) global-chat (テキストチャンネル) */
+    /* 6) global-chat チャンネル */
     const globalChat = await interaction.guild.channels.create({
       name  : 'global-chat',
       type  : ChannelType.GuildText,
       parent: category.id
     });
 
-    /* 7) settings (管理者のみ閲覧) */
+    /* 7) settings チャンネル（管理者のみ閲覧） */
     const settings = await interaction.guild.channels.create({
       name  : 'settings',
       type  : ChannelType.GuildText,
@@ -153,10 +153,10 @@ async function handleSetup(interaction) {
       ]
     });
 
-    /* 8) Redis へ登録 & HUB へ通知 */
+    /* 8) Redis 登録 & HUB へ通知  ※必ず JSON.stringify で保存 */
     await redis.sadd(
       'global:channels',
-      JSON.stringify({ guildId: interaction.guild.id, channelId: globalChat.id })
+      JSON.stringify({ guildId: interaction.guild.id, channelId: globalChat.id })   // ←重要
     );
     fetch(process.env.HUB_ENDPOINT + '/register', {
       method : 'POST',
@@ -175,9 +175,7 @@ async function handleSetup(interaction) {
     ].map(([label, value, emoji]) => ({ label, value, emoji }));
 
     const tzOpts = [];
-    for (let o = -11; o <= 13; o++) {
-      tzOpts.push({ label: `UTC${o >= 0 ? '+' + o : o}`, value: String(o) });
-    }
+    for (let o = -11; o <= 13; o++) tzOpts.push({ label: `UTC${o >= 0 ? '+' + o : o}`, value: String(o) });
 
     const rowLang = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
@@ -231,6 +229,7 @@ async function handleSetup(interaction) {
     }
   }
 }
+
 
 
 /* ────────── /profile ────────── */
