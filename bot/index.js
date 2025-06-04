@@ -93,10 +93,12 @@ async function handleSetup(interaction) {
       type: ChannelType.GuildCategory
     });
 
-    // 2. bot-announcements: 普通のテキストチャンネル
+    // 2. bot-announcements: ニュースチャンネル（なければテキスト）
+    const canNews = interaction.guild.features?.includes('NEWS') ||
+                    interaction.guild.features?.includes('COMMUNITY');
     const botAnnouncements = await interaction.guild.channels.create({
       name: 'bot-announcements',
-      type: ChannelType.GuildAnnouncement,
+      type: canNews ? ChannelType.GuildAnnouncement : ChannelType.GuildText,
       parent: category.id,
       permissionOverwrites: [
         {
@@ -107,12 +109,12 @@ async function handleSetup(interaction) {
       ]
     });
     // フォロー対象はサポートサーバーの Announcement チャンネル
-    try {
-      if (NEWS_SOURCE && typeof botAnnouncements.follow === 'function') {
+    if (NEWS_SOURCE && canNews && typeof botAnnouncements.follow === 'function') {
+      try {
         await botAnnouncements.follow(NEWS_SOURCE);
+      } catch {
+        // silent
       }
-    } catch {
-      // silent
     }
 
     // 3. global-chat チャンネル
