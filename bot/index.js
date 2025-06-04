@@ -105,7 +105,7 @@ async function handleSetup(interaction) {
       type: ChannelType.GuildCategory
     });
 
-    /* 4) bot-announcements ― テキストチャンネル */
+    /* 4) bot-announcements ― テキストチャンネルとして作成 */
     const botAnnouncements = await interaction.guild.channels.create({
       name : 'bot-announcements',
       type : ChannelType.GuildText,
@@ -132,14 +132,14 @@ async function handleSetup(interaction) {
       console.error('follow failed:', err);
     }
 
-    /* 6) global-chat チャンネル */
+    /* 6) global-chat チャンネルを作成 */
     const globalChat = await interaction.guild.channels.create({
       name  : 'global-chat',
       type  : ChannelType.GuildText,
       parent: category.id
     });
 
-    /* 7) settings チャンネル（管理者のみ閲覧） */
+    /* 7) settings チャンネル（管理者のみ閲覧）を作成 */
     const settings = await interaction.guild.channels.create({
       name  : 'settings',
       type  : ChannelType.GuildText,
@@ -153,10 +153,10 @@ async function handleSetup(interaction) {
       ]
     });
 
-    /* 8) Redis 登録 & HUB へ通知  ※必ず JSON.stringify で保存 */
+    /* 8) Redis 登録 & HUB へ通知（JSON.stringify で保存） */
     await redis.sadd(
       'global:channels',
-      JSON.stringify({ guildId: interaction.guild.id, channelId: globalChat.id })   // ←重要
+      JSON.stringify({ guildId: interaction.guild.id, channelId: globalChat.id })
     );
     fetch(process.env.HUB_ENDPOINT + '/register', {
       method : 'POST',
@@ -175,7 +175,9 @@ async function handleSetup(interaction) {
     ].map(([label, value, emoji]) => ({ label, value, emoji }));
 
     const tzOpts = [];
-    for (let o = -11; o <= 13; o++) tzOpts.push({ label: `UTC${o >= 0 ? '+' + o : o}`, value: String(o) });
+    for (let o = -11; o <= 13; o++) {
+      tzOpts.push({ label: `UTC${o >= 0 ? '+' + o : o}`, value: String(o) });
+    }
 
     const rowLang = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
@@ -229,6 +231,7 @@ async function handleSetup(interaction) {
     }
   }
 }
+
 
 
 
