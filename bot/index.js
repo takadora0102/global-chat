@@ -6,7 +6,7 @@
  *   1. /setup で作成する bot-announcements を「GuildText」に変更
  *      フォロー対象はサポートサーバーのアナウンスチャンネル（環境変数: NEWS_SOURCE）に
  *   2. /setup で settings チャンネルに送るメッセージを英語に統一
- *   3. 以前あった "Detect Timezone (location-based)" ボタンを再実装
+ *   3. 以前実装していたロケーションから自動でタイムゾーンを判定するボタンを再実装
  *   4. それぞれのプレースホルダーや説明文も英語化
  */
 
@@ -83,10 +83,8 @@ async function translate(text, targetLang) {
 /* ────────── /setup Handler ────────── */
 async function handleSetup(interaction) {
   try {
-    // まず一度 defer して後で editReply する
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    // 管理者チェック
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
       return interaction.editReply({ content: '❌ You need Administrator permission to run this command.' });
     }
@@ -112,9 +110,7 @@ async function handleSetup(interaction) {
     });
 
     // もし NEWS_SOURCE があるなら、サポートサーバーの Announcement チャンネルをフォロー
-    // ただしフォローできるのは Announcement チャンネルのみなので、
-    // botAnnouncements 自身が GuildText だと follow() は存在しないためエラーになる
-    //→ フォロー機能は動かないが try/catch で握りつぶす
+    // ただし botAnnouncements がテキストチャネルのため follow() は存在しない
     try {
       if (NEWS_SOURCE && typeof botAnnouncements.follow === 'function') {
         await botAnnouncements.follow(NEWS_SOURCE);
@@ -156,15 +152,9 @@ async function handleSetup(interaction) {
         guildId: interaction.guild.id,
         channelId: globalChat.id
       })
-    }).catch(() => {
-      // ネットワークエラー等は握りつぶす
-    });
+    }).catch(() => {});
 
     // 6. settings チャンネルに送るメッセージを英語で構築
-    //    - Default Language
-    //    - Timezone
-    //    - Auto-Translate ON / OFF
-    //    - Detect Timezone from location
     const languageOptions = [
       ['English (US)', 'en', '🇺🇸'],
       ['日本語', 'ja', '🇯🇵'],
@@ -194,7 +184,6 @@ async function handleSetup(interaction) {
       });
     }
 
-    // ボタン: Auto-Translate ON / OFF / Detect Timezone
     const btnAutoOn  = new ButtonBuilder()
       .setCustomId('autotrans_on')
       .setLabel('Auto-Translate ON')
@@ -212,7 +201,7 @@ async function handleSetup(interaction) {
       .setLabel('Support Server')
       .setStyle(ButtonStyle.Link);
 
-    // settings チャンネルへメッセージ送信
+    // ─── 修正ポイント: ActionRow を 5 行以内にまとめる ───
     await settings.send({
       content:
         '**Global Chat Settings**\n' +
@@ -221,32 +210,28 @@ async function handleSetup(interaction) {
         '3️⃣ Auto-Translate ON / OFF\n' +
         '4️⃣ Detect Timezone from your location',
       components: [
-        // デフォルト言語セレクト
+        // 1行目: Default Language 用 SelectMenu
         new ActionRowBuilder().addComponents(
           new StringSelectMenuBuilder()
             .setCustomId('set_default_lang')
             .setPlaceholder('Select your default language')
             .addOptions(languageOptions)
         ),
-        // タイムゾーンセレクト
+        // 2行目: Timezone 用 SelectMenu
         new ActionRowBuilder().addComponents(
           new StringSelectMenuBuilder()
             .setCustomId('set_timezone')
             .setPlaceholder('Select your timezone')
             .addOptions(timezoneOptions)
         ),
-        // Auto-Translate ON
-        new ActionRowBuilder().addComponents(btnAutoOn),
-        // Auto-Translate OFF
-        new ActionRowBuilder().addComponents(btnAutoOff),
-        // Detect Timezone
-        new ActionRowBuilder().addComponents(btnDetectTZ),
-        // Support Server Link
-        new ActionRowBuilder().addComponents(btnSupport)
+        // 3行目: Auto-Translate ON と OFF を同じ行に並べる
+        new ActionRowBuilder().addComponents(btnAutoOn, btnAutoOff),
+        // 4行目: Detect Timezone と Support Server を同じ行に並べる
+        new ActionRowBuilder().addComponents(btnDetectTZ, btnSupport)
       ]
     });
+    // ────────────────────────────────────────────────────────
 
-    // 完了メッセージ
     await interaction.editReply({ content: '✅ Setup completed successfully!' });
   } catch (error) {
     console.error('setup error:', error);
@@ -299,12 +284,12 @@ async function handleRanking(interaction) {
 
 /* ────────── /help Handler ────────── */
 const REGIONS = [
-  { label: 'Asia',            value: 'asia',             emoji: '🌏' },
-  { label: 'Europe',          value: 'europe',           emoji: '🌍' },
-  { label: 'North America',   value: 'north_america',    emoji: '🌎' },
+  { label: 'Asia', value: 'asia', emoji: '🌏' },
+  { label: 'Europe', value: 'europe', emoji: '🌍' },
+  { label: 'North America', value: 'north_america', emoji: '🌎' },
   { label: 'Middle East & Africa', value: 'middle_east_africa', emoji: '🌍' },
-  { label: 'South America',   value: 'south_america',     emoji: '🌎' },
-  { label: 'Oceania',         value: 'oceania',          emoji: '🌏' }
+  { label: 'South America', value: 'south_america', emoji: '🌎' },
+  { label: 'Oceania', value: 'oceania', emoji: '🌏' }
 ];
 const REGION_LANGS = {
   asia: [
@@ -351,7 +336,7 @@ const REGION_LANGS = {
   ]
 };
 
-/* ────────── InteractionCreate イベント ────────── */
+/* ────────── InteractionCreate Event ────────── */
 client.on(Events.InteractionCreate, async (interaction) => {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
