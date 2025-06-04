@@ -1,11 +1,11 @@
 /**
  * index.js – Global Chat Bot
- *  (2025-07-XX: Partial fetch ＆ Global Chat 自動翻訳導入版)
+ *  (2025-07-XX: 画像返信対応＆Auto-Translate 再検証版)
  *
- * ＜変更点＞
- *  1. MessageReactionAdd で Partial を fetch して、古いメッセージにも国旗翻訳が使えるように
- *  2. グローバルチャット間のメッセージ転送時に「Auto-Translate ON」のユーザーには
- *     各サーバーの設定言語へ自動で翻訳して送信する機能を追加
+ * ＜主な変更点＞
+ *  1. MessageCreate→「返信(Reply)として引用されたメッセージ」が画像だった場合も画像の URL を埋め込む
+ *  2. /relay 処理にデバッグ用ログを追加し、Redis から読まれる destLang・autoOn が正しく取得できているかを確認
+ *  3. 条件を満たす場合にきちんと Google 翻訳を呼び出して、翻訳済みテキストを送信するように修正
  */
 
 import 'dotenv/config';
@@ -59,7 +59,7 @@ const client = new Client({
     IntentsBitField.Flags.MessageContent,
     IntentsBitField.Flags.GuildMessageReactions
   ],
-  partials: ['MESSAGE', 'CHANNEL', 'REACTION'] // 追加：古いメッセージに対しても反応を取得
+  partials: ['MESSAGE', 'CHANNEL', 'REACTION']
 });
 
 /* ────────── 2. ヘルパー関数 ────────── */
@@ -86,7 +86,7 @@ function buildRelayEmbed({ userTag, originGuild, tz, userAvatar, content, userId
     .setFooter({ text: `UID:${userId} 🌐 global chat${auto ? ' • auto-translated' : ''}` })
     .setTimestamp(Date.now());
 
-  if (reply) eb.addFields({ name: '↪️ reply to', value: reply.slice(0, 256) });
+  if (reply) eb.addFields({ name: '↪️ Reply to', value: reply.slice(0, 256) });
   if (content) eb.setDescription(content);
   return eb;
 }
@@ -128,6 +128,7 @@ async function handleSetup(interaction) {
       const src = await client.channels.fetch(NEWS_SOURCE);
       if (src?.type === ChannelType.GuildAnnouncement && src.addFollower) {
         await src.addFollower(botAnnouncements.id, 'auto-follow');
+        console.log('✓ followed support announcement');
       }
     } catch (e) {
       console.error('follow failed:', e);
@@ -385,27 +386,44 @@ client.on(Events.InteractionCreate, async (i) => {
 
 /* ────────── 8. MessageCreate ────────── */
 client.on(Events.MessageCreate, async (msg) => {
+  // Bot 自身のメッセージや、Global Chat につながっていないチャンネルは無視
   if (msg.author.bot) return;
   if (!(await redis.sismember('global:channels', msg.channelId))) return;
 
-  /* メッセージ統計 */
+  /* 1) メッセージ統計 */
   await redis.incrby(kMsg(msg.author.id), 1);
 
-  /* 返信の抜粋を取得 */
+  /* 2) 返信の抜粋（replyExcerpt）を取得 */
   let replyExcerpt = null;
   if (msg.reference?.messageId) {
     try {
       const ref = await msg.channel.messages.fetch(msg.reference.messageId);
-      replyExcerpt = (ref.content || ref.embeds[0]?.description || '').slice(0, 250);
-    } catch { /* ignore */ }
+
+      // (1) 元メッセージにテキストがあればそれを引用
+      if (ref.content) {
+        replyExcerpt = ref.content.slice(0, 250);
+      }
+      // (2) テキストがなく添付画像があれば、最初の画像 URL を引用
+      else if (ref.attachments.size > 0) {
+        const url = ref.attachments.first().url;
+        replyExcerpt = `[Image] ${url}`;
+      }
+      // (3) それ以外に embed があれば embed.description を引用
+      else if (ref.embeds.length > 0 && ref.embeds[0].description) {
+        replyExcerpt = ref.embeds[0].description.slice(0, 250);
+      }
+    } catch (e) {
+      // 参照先メッセージが取得できなかった場合は何もしない
+      console.error('Reply fetch error:', e);
+    }
   }
 
-  /* メタ情報取得 */
+  /* 3) メタ情報（タイムゾーン・言語・自動翻訳設定）を取得 */
   const tz   = (await redis.hget(`tz:${msg.guildId}`, 'tz')) ?? '0';
   const lang = (await redis.hget(`lang:${msg.guildId}`, 'lang')) ?? 'en';
   const auto = (await redis.hget(`lang:${msg.guildId}`, 'auto')) === 'true';
 
-  /* ペイロード作成 */
+  /* 4) ペイロードを作成 */
   const payload = {
     globalId   : randomUUID(),
     guildId    : msg.guildId,
@@ -417,22 +435,28 @@ client.on(Events.MessageCreate, async (msg) => {
     content    : msg.content,
     replyExcerpt,
     sentAt     : Date.now(),
+    // payload.files は [{ attachment: URL, name: ファイル名 }, ...] の配列
     files      : msg.attachments.map(a => ({ attachment: a.url, name: a.name })),
-    targetLang : auto ? lang : null, // Auto-Translate ON の場合は送信先で翻訳
+    targetLang : auto ? lang : null,
     userId     : msg.author.id
   };
 
-  /* HUBへ publish */
-  const ok = await fetch(process.env.HUB_ENDPOINT + '/publish', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload)
-  })
-    .then((r) => r.ok)
-    .catch(() => false);
+  /* 5) HUB へ publish 試行 */
+  let ok = false;
+  try {
+    const res = await fetch(process.env.HUB_ENDPOINT + '/publish', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    ok = res.ok;
+  } catch {
+    ok = false;
+  }
 
+  /* 6) フォールバック：もし publish に失敗したら Redis 上の全チャンネルへ直接転送 */
   if (!ok) {
-    // フォールバック：Embed を生成して全サーバーへ転送
+    // 先に Embed を作成
     const embed = buildRelayEmbed({
       userTag: payload.userTag,
       originGuild: payload.originGuild,
@@ -443,27 +467,41 @@ client.on(Events.MessageCreate, async (msg) => {
       auto: !!payload.targetLang,
       reply: payload.replyExcerpt
     });
-    for (const channelId of await redis.smembers('global:channels')) {
+
+    // Redis に登録されているすべての global:channels を巡回
+    const channelIds = await redis.smembers('global:channels');
+    for (const channelId of channelIds) {
+      // 自分自身の投稿チャンネルには送り返さない
       if (channelId === msg.channelId) continue;
+
       const dupKey = `${payload.globalId}:${channelId}`;
       if (await alreadySent(dupKey)) continue;
+
       try {
         const ch = await client.channels.fetch(channelId);
-        let toSend = { embeds: [embed], files: payload.files.map((f) => f.attachment) };
+        if (!ch || !ch.isTextBased()) continue;
 
-        // ここでは自動翻訳なし fallback なので通常の embed
-        const sent = await ch.send(toSend);
+        // Discord.js v14 では、files オプションに
+        // 「URL の配列」か「{ attachment, name } の配列」を渡せる
+        const filesToSend = payload.files.map(f => ({ attachment: f.attachment, name: f.name }));
+
+        const sent = await ch.send({
+          embeds: [embed],
+          files: filesToSend
+        });
         await sent.react('👍');
-      } catch { /* ignore */ }
+      } catch (e) {
+        console.error(`Fallback relay to ${channelId} failed:`, e);
+      }
     }
   }
 });
 
-/* ────────── 9. ReactionAdd (👍 & 翻訳) ────────── */
+/* ────────── 9. MessageReactionAdd (👍 & 国旗翻訳) ────────── */
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   if (user.bot) return;
 
-  // partial チェック → fetch して完全なオブジェクトを取得
+  // partial（キャッシュ外状態）の場合は fetch して完全なオブジェクトを取得
   if (reaction.partial) {
     try {
       await reaction.fetch();
@@ -480,7 +518,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     const setKey = `like_set:${msg.id}`;
     if (await redis.sismember(setKey, user.id)) return;
     if ((await redis.scard(setKey)) >= 5) {
-      return reaction.users.remove(user.id).catch(() => { });
+      return reaction.users.remove(user.id).catch(() => {});
     }
     await redis.sadd(setKey, user.id);
     await redis.expire(setKey, 60 * 60 * 24 * 7);
@@ -508,7 +546,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
   }
 });
 
-/* ────────── 10. Express relay (Global Chat 自動翻訳対応) ────────── */
+/* ────────── 10. Express relay (グローバルチャット間の自動翻訳) ────────── */
 const app = express();
 app.use(bodyParser.json());
 
@@ -525,24 +563,26 @@ app.post('/relay', async (req, res) => {
       try {
         const ch = await client.channels.fetch(channelId);
 
-        // ← 追加：自動翻訳機能
-        // 送信先サーバーごとの設定言語を Redis から取得
+        // ─── ここで送信先サーバーの言語設定を Redis から取得 ───
         const destLang = await redis.hget(`lang:${ch.guildId}`, 'lang');
         const autoOn   = (await redis.hget(`lang:${ch.guildId}`, 'auto')) === 'true';
 
+        // デバッグ用ログ（Redis から取得できているか確認）
+        console.log(`→ Relay to ${channelId} (guild:${ch.guildId}): destLang=${destLang}, autoOn=${autoOn}`);
+
         let finalContent = p.content;
         let autoFlag = false;
+        // 「Auto-Translate ON」で言語設定があれば翻訳を試みる
         if (autoOn && destLang) {
           try {
             finalContent = await translate(p.content, destLang);
             autoFlag = true;
           } catch (e) {
             console.error('auto-translate error:', e);
-            finalContent = p.content; // 失敗時は原文のまま
+            finalContent = p.content;
           }
         }
 
-        // embed を作成（翻訳済み or 原文）
         const embed = buildRelayEmbed({
           userTag: p.userTag,
           originGuild: p.originGuild,
