@@ -325,6 +325,9 @@ const REGION_LANGS = {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  if (interaction.isChatInputCommand()) {
+    console.log(`▶ Received command: ${interaction.commandName} from ${interaction.user.tag}`);
+  }
 
   // /help – Region Select
   if (interaction.isChatInputCommand() && interaction.commandName === 'help') {
