@@ -1,12 +1,11 @@
 /**
  * index.js – Global Chat Bot
- *  (2025-06-XX: 用途別メッセージ分割版)
+ *  (2025-07-XX: Partial fetch ＆ Global Chat 自動翻訳導入版)
  *
- * ＜変更ポイント＞
- *  ・Default Language 設定のための「地域→言語選択」を
- *    元の settings メッセージを上書きせず、別メッセージで行うように修正
- *  ・それに伴い、interaction.update → interaction.reply(ephemeral) に変更
- *  ・他の設定（Timezone・Auto・Detect・Support）は常に settings メッセージに残る
+ * ＜変更点＞
+ *  1. MessageReactionAdd で Partial を fetch して、古いメッセージにも国旗翻訳が使えるように
+ *  2. グローバルチャット間のメッセージ転送時に「Auto-Translate ON」のユーザーには
+ *     各サーバーの設定言語へ自動で翻訳して送信する機能を追加
  */
 
 import 'dotenv/config';
@@ -32,7 +31,7 @@ import { FLAG_TO_LANG } from './constants.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/* ────────── 0. env check ────────── */
+/* ────────── 0. 環境変数チェック ────────── */
 for (const k of [
   'DISCORD_TOKEN',
   'HUB_ENDPOINT',
@@ -48,7 +47,7 @@ for (const k of [
 }
 const NEWS_SOURCE = process.env.NEWS_SOURCE;
 
-/* ────────── 1. Redis & Client ────────── */
+/* ────────── 1. Redis & Client 初期化 ────────── */
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN
@@ -59,14 +58,15 @@ const client = new Client({
     IntentsBitField.Flags.GuildMessages,
     IntentsBitField.Flags.MessageContent,
     IntentsBitField.Flags.GuildMessageReactions
-  ]
+  ],
+  partials: ['MESSAGE', 'CHANNEL', 'REACTION'] // 追加：古いメッセージに対しても反応を取得
 });
 
-/* ────────── 2. helpers ────────── */
+/* ────────── 2. ヘルパー関数 ────────── */
 const kMsg = (u) => `msg_cnt:${u}`;
 const kLike = (u) => `like_cnt:${u}`;
 
-/* Google translate (unauth) */
+/* Google 翻訳（認証不要の public API） */
 async function translate(text, lang) {
   const url =
     'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&dt=t&tl=' +
@@ -79,7 +79,7 @@ async function translate(text, lang) {
   return j[0].map((v) => v[0]).join('');
 }
 
-/* embed builder */
+/* Relay Embed ビルダー */
 function buildRelayEmbed({ userTag, originGuild, tz, userAvatar, content, userId, auto, reply }) {
   const eb = new EmbedBuilder()
     .setAuthor({ name: `${userTag} [${originGuild} UTC${tz}]`, iconURL: userAvatar })
@@ -91,7 +91,7 @@ function buildRelayEmbed({ userTag, originGuild, tz, userAvatar, content, userId
   return eb;
 }
 
-/* duplicate guard */
+/* Duplicate ガード */
 async function alreadySent(globalKey) {
   const key = `dup:${globalKey}`;
   if (await redis.get(key)) return true;
@@ -99,7 +99,7 @@ async function alreadySent(globalKey) {
   return false;
 }
 
-/* ────────── 3. /setup ────────── */
+/* ────────── 3. /setup コマンド ────────── */
 async function handleSetup(interaction) {
   try {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -107,13 +107,13 @@ async function handleSetup(interaction) {
       return interaction.editReply('❌ Need Administrator permission.');
     }
 
-    /* 3-1) 「Global Chat」カテゴリ */
+    /* 3-1) カテゴリ作成 */
     const category = await interaction.guild.channels.create({
       name: 'Global Chat',
       type: ChannelType.GuildCategory
     });
 
-    /* 3-2) bot-announcements (TEXT) */
+    /* 3-2) bot-announcements チャンネル (TEXT) */
     const botAnnouncements = await interaction.guild.channels.create({
       name: 'bot-announcements',
       type: ChannelType.GuildText,
@@ -129,16 +129,18 @@ async function handleSetup(interaction) {
       if (src?.type === ChannelType.GuildAnnouncement && src.addFollower) {
         await src.addFollower(botAnnouncements.id, 'auto-follow');
       }
-    } catch (e) { console.error('follow failed:', e); }
+    } catch (e) {
+      console.error('follow failed:', e);
+    }
 
-    /* 3-4) global-chat (TEXT) */
+    /* 3-4) global-chat チャンネル (TEXT) */
     const globalChat = await interaction.guild.channels.create({
       name: 'global-chat',
       type: ChannelType.GuildText,
       parent: category.id
     });
 
-    /* 3-5) settings (管理者のみ閲覧) */
+    /* 3-5) settings チャンネル (管理者専用) */
     const settings = await interaction.guild.channels.create({
       name: 'settings',
       type: ChannelType.GuildText,
@@ -148,7 +150,7 @@ async function handleSetup(interaction) {
       ]
     });
 
-    /* 3-6) Redis 登録 & HUB 通知 */
+    /* 3-6) Redis 登録＆HUB 連携 */
     await redis.sadd('global:channels', globalChat.id);
     fetch(process.env.HUB_ENDPOINT + '/register', {
       method: 'POST',
@@ -158,7 +160,7 @@ async function handleSetup(interaction) {
 
     /* ────────── Settings に送る UI メッセージ ────────── */
 
-    // (A) 地域選択用リスト
+    // (A) 地域選択リスト
     const REGIONS = [
       { label: 'Asia',          value: 'asia',          emoji: '🌏' },
       { label: 'Europe',        value: 'europe',        emoji: '🌍' },
@@ -168,11 +170,11 @@ async function handleSetup(interaction) {
       { label: 'Oceania',       value: 'oceania',       emoji: '🌏' }
     ];
 
-    // (C) タイムゾーン選択用リスト
+    // (C) タイムゾーン選択リスト
     const tzOpts = [];
     for (let o = -11; o <= 13; o++) tzOpts.push({ label: `UTC${o >= 0 ? '+' + o : o}`, value: String(o) });
 
-    // (D) UI の行をそれぞれ作成
+    // (D) UI の行を作成
     // 地域選択メニュー（Default Language 用）
     const rowRegion = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
@@ -205,7 +207,7 @@ async function handleSetup(interaction) {
       new ButtonBuilder().setURL(process.env.SUPPORT_SERVER_URL).setLabel('Support').setStyle(ButtonStyle.Link)
     );
 
-    // settings チャンネルへ初回メッセージを送信
+    // settings チャンネルへ初回メッセージ送信
     await settings.send({
       content:
         '**Global Chat Settings**\n\n' +
@@ -216,7 +218,7 @@ async function handleSetup(interaction) {
       components: [rowRegion, rowTZ, rowAuto, rowMisc]
     });
 
-    /* 3-7) 完了メッセージを編集 */
+    /* 3-7) 完了返信 */
     await interaction.editReply('✅ Setup completed!');
   } catch (e) {
     console.error('setup error:', e);
@@ -224,7 +226,7 @@ async function handleSetup(interaction) {
   }
 }
 
-/* ────────── 4. /profile ────────── */
+/* ────────── 4. /profile コマンド ────────── */
 async function handleProfile(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const m = (await redis.get(kMsg(interaction.user.id))) || '0';
@@ -232,7 +234,7 @@ async function handleProfile(interaction) {
   await interaction.editReply(`📊 **${interaction.user.tag}**\n• Messages: ${m}\n• 👍: ${l}`);
 }
 
-/* ────────── 5. /ranking ────────── */
+/* ────────── 5. /ranking コマンド ────────── */
 async function handleRanking(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const sub = interaction.options.getSubcommand();
@@ -245,14 +247,18 @@ async function handleRanking(interaction) {
   list.sort((a, b) => b.v - a.v).splice(10);
   const lines = await Promise.all(
     list.map(async (u, i) => {
-      try { const user = await client.users.fetch(u.id); return `#${i + 1} – ${user.tag} (${u.v})`; }
-      catch { return `#${i + 1} – (unknown) (${u.v})`; }
+      try {
+        const user = await client.users.fetch(u.id);
+        return `#${i + 1} – ${user.tag} (${u.v})`;
+      } catch {
+        return `#${i + 1} – (unknown) (${u.v})`;
+      }
     })
   );
   await interaction.editReply(`🏆 Top 10 by ${sub}\n\n${lines.join('\n') || 'No data'}`);
 }
 
-/* ────────── 6. Help UI (region→language) ────────── */
+/* ────────── 6. /help UI (地域→言語) ────────── */
 const HELP_REGIONS = [
   { label: 'Asia',          value: 'asia',          emoji: '🌏' },
   { label: 'Europe',        value: 'europe',        emoji: '🌍' },
@@ -270,7 +276,7 @@ const HELP_REGION_LANGS = {
   oceania:      ['en','en-AU','en-NZ']
 };
 
-/* ────────── 7. InteractionCreate ────────── */
+/* ────────── 7. InteractionCreate 全体 ────────── */
 client.on(Events.InteractionCreate, async (i) => {
   // --- コマンド系 ---
   if (i.isChatInputCommand()) {
@@ -278,7 +284,7 @@ client.on(Events.InteractionCreate, async (i) => {
     if (i.commandName === 'profile') return handleProfile(i);
     if (i.commandName === 'ranking') return handleRanking(i);
     if (i.commandName === 'help') {
-      // /help 実行時：地域選択メニューを返す
+      // /help → 地域選択
       return i.reply({
         content: '🔎 Select your region:',
         components: [
@@ -296,7 +302,7 @@ client.on(Events.InteractionCreate, async (i) => {
     }
   }
 
-  // --- /help の 地域選択 → 言語選択 フロー ---
+  // --- /help の 地域→言語 フロー ---
   if (i.isStringSelectMenu() && i.customId === 'help_region') {
     const chosenRegion = i.values[0];
     const langs = HELP_REGION_LANGS[chosenRegion] || ['en'];
@@ -307,9 +313,7 @@ client.on(Events.InteractionCreate, async (i) => {
           new StringSelectMenuBuilder()
             .setCustomId('help_lang')
             .setPlaceholder('Pick language')
-            .addOptions(
-              langs.map(code => ({ label: code, value: code }))
-            )
+            .addOptions(langs.map(code => ({ label: code, value: code })))
         )
       ]
     });
@@ -328,11 +332,9 @@ client.on(Events.InteractionCreate, async (i) => {
     return;
   }
 
-  // --- settings チャンネル: Default Language → 地域選択 フロー ---
+  // --- settings: Default Language → 地域選択 → 言語選択 ---
   if (i.isStringSelectMenu() && i.customId === 'setting_region') {
-    // ユーザーが地域を選択
     const chosenRegion = i.values[0];
-    // 言語リストを地域ごとに持つ定義
     const REGION_LANGS = {
       asia:         ['en','ja','zh','zh-TW','ko','vi'],
       europe:       ['en','es','fr','de','ru','uk','el'],
@@ -343,7 +345,7 @@ client.on(Events.InteractionCreate, async (i) => {
     };
     const langs = REGION_LANGS[chosenRegion] || ['en'];
 
-    // 新しいメッセージで言語選択メニューを【Ephemeral】で送る
+    // ✓: 別メッセージ (Ephemeral) で言語選択を促す
     return i.reply({
       content: '📑 Now select your language:',
       components: [
@@ -351,23 +353,19 @@ client.on(Events.InteractionCreate, async (i) => {
           new StringSelectMenuBuilder()
             .setCustomId('setting_lang')
             .setPlaceholder('Pick language')
-            .addOptions(
-              langs.map(code => ({ label: code, value: code }))
-            )
+            .addOptions(langs.map(code => ({ label: code, value: code })))
         )
       ],
       flags: MessageFlags.Ephemeral
     });
   }
-
-  // --- settings チャンネル: 言語を選択したとき ---
   if (i.isStringSelectMenu() && i.customId === 'setting_lang') {
     const chosenLang = i.values[0];
     await redis.hset(`lang:${i.guildId}`, { lang: chosenLang, auto: 'true' });
     return i.reply({ content: `✅ Default Language set to **${chosenLang}** (Auto ON).`, flags: MessageFlags.Ephemeral });
   }
 
-  // --- settings チャンネル: Timezone / Auto / Detect / Support ---
+  // --- settings: Timezone / Auto / Detect / Support ---
   if (i.isStringSelectMenu() && i.customId === 'set_timezone') {
     const tzValue = i.values[0];
     await redis.hset(`tz:${i.guildId}`, { tz: tzValue });
@@ -390,23 +388,24 @@ client.on(Events.MessageCreate, async (msg) => {
   if (msg.author.bot) return;
   if (!(await redis.sismember('global:channels', msg.channelId))) return;
 
-  /* stats */
+  /* メッセージ統計 */
   await redis.incrby(kMsg(msg.author.id), 1);
 
-  /* reply excerpt */
+  /* 返信の抜粋を取得 */
   let replyExcerpt = null;
   if (msg.reference?.messageId) {
     try {
       const ref = await msg.channel.messages.fetch(msg.reference.messageId);
       replyExcerpt = (ref.content || ref.embeds[0]?.description || '').slice(0, 250);
-    } catch {/* ignore */ }
+    } catch { /* ignore */ }
   }
 
-  /* meta */
+  /* メタ情報取得 */
   const tz   = (await redis.hget(`tz:${msg.guildId}`, 'tz')) ?? '0';
   const lang = (await redis.hget(`lang:${msg.guildId}`, 'lang')) ?? 'en';
   const auto = (await redis.hget(`lang:${msg.guildId}`, 'auto')) === 'true';
 
+  /* ペイロード作成 */
   const payload = {
     globalId   : randomUUID(),
     guildId    : msg.guildId,
@@ -419,19 +418,21 @@ client.on(Events.MessageCreate, async (msg) => {
     replyExcerpt,
     sentAt     : Date.now(),
     files      : msg.attachments.map(a => ({ attachment: a.url, name: a.name })),
-    targetLang : auto ? lang : null,
+    targetLang : auto ? lang : null, // Auto-Translate ON の場合は送信先で翻訳
     userId     : msg.author.id
   };
 
-  /* publish to HUB */
+  /* HUBへ publish */
   const ok = await fetch(process.env.HUB_ENDPOINT + '/publish', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload)
-  }).then(r => r.ok).catch(() => false);
+  })
+    .then((r) => r.ok)
+    .catch(() => false);
 
   if (!ok) {
-    // フォールバック
+    // フォールバック：Embed を生成して全サーバーへ転送
     const embed = buildRelayEmbed({
       userTag: payload.userTag,
       originGuild: payload.originGuild,
@@ -448,70 +449,115 @@ client.on(Events.MessageCreate, async (msg) => {
       if (await alreadySent(dupKey)) continue;
       try {
         const ch = await client.channels.fetch(channelId);
-        const sent = await ch.send({ embeds: [embed], files: payload.files.map(f => f.attachment) });
+        let toSend = { embeds: [embed], files: payload.files.map((f) => f.attachment) };
+
+        // ここでは自動翻訳なし fallback なので通常の embed
+        const sent = await ch.send(toSend);
         await sent.react('👍');
-      } catch {/* ignore */ }
+      } catch { /* ignore */ }
     }
   }
 });
 
 /* ────────── 9. ReactionAdd (👍 & 翻訳) ────────── */
-client.on(Events.MessageReactionAdd, async (r, user) => {
+client.on(Events.MessageReactionAdd, async (reaction, user) => {
   if (user.bot) return;
 
-  // Like カウント
-  if (r.emoji.name === '👍' && r.message.author?.id === client.user.id) {
-    const setKey = `like_set:${r.message.id}`;
+  // partial チェック → fetch して完全なオブジェクトを取得
+  if (reaction.partial) {
+    try {
+      await reaction.fetch();
+    } catch (err) {
+      console.error('Failed to fetch partial reaction:', err);
+      return;
+    }
+  }
+
+  const msg = reaction.message;
+
+  /* 👍 いいねカウント */
+  if (reaction.emoji.name === '👍' && msg.author?.id === client.user.id) {
+    const setKey = `like_set:${msg.id}`;
     if (await redis.sismember(setKey, user.id)) return;
-    if ((await redis.scard(setKey)) >= 5) return r.users.remove(user.id).catch(() => {});
+    if ((await redis.scard(setKey)) >= 5) {
+      return reaction.users.remove(user.id).catch(() => { });
+    }
     await redis.sadd(setKey, user.id);
     await redis.expire(setKey, 60 * 60 * 24 * 7);
-    const m = r.message.embeds[0]?.footer?.text.match(/UID:(\d+)/);
+    const m = msg.embeds[0]?.footer?.text.match(/UID:(\d+)/);
     if (m) await redis.incrby(kLike(m[1]), 1);
     return;
   }
 
-  // 国旗リアクション翻訳
-  const langCode = FLAG_TO_LANG[r.emoji.name];
+  /* 国旗リアクション翻訳 */
+  const langCode = FLAG_TO_LANG[reaction.emoji.name];
   if (!langCode) return;
-  const original = r.message.content || r.message.embeds[0]?.description || '';
+  const original = msg.content || msg.embeds[0]?.description || '';
   if (!original) return;
   try {
     const translated = await translate(original, langCode);
-    await r.message.reply({
+    await msg.reply({
       embeds: [
         new EmbedBuilder()
           .setDescription(`> ${original}\n\n**${translated}**`)
           .setFooter({ text: `🌐 translated to ${langCode}` })
       ]
     });
-  } catch (e) { console.error('translate error:', e); }
+  } catch (e) {
+    console.error('translate error:', e);
+  }
 });
 
-/* ────────── 10. Express relay ────────── */
+/* ────────── 10. Express relay (Global Chat 自動翻訳対応) ────────── */
 const app = express();
 app.use(bodyParser.json());
 
 app.post('/relay', async (req, res) => {
   try {
     const p = req.body;
+    // p: { globalId, guildId, channelId, userTag, userAvatar, originGuild, tz, content, replyExcerpt, files, targetLang, userId }
     for (const channelId of await redis.smembers('global:channels')) {
       if (channelId === p.channelId) continue;
+
       const dupKey = `${p.globalId}:${channelId}`;
       if (await alreadySent(dupKey)) continue;
+
       try {
         const ch = await client.channels.fetch(channelId);
+
+        // ← 追加：自動翻訳機能
+        // 送信先サーバーごとの設定言語を Redis から取得
+        const destLang = await redis.hget(`lang:${ch.guildId}`, 'lang');
+        const autoOn   = (await redis.hget(`lang:${ch.guildId}`, 'auto')) === 'true';
+
+        let finalContent = p.content;
+        let autoFlag = false;
+        if (autoOn && destLang) {
+          try {
+            finalContent = await translate(p.content, destLang);
+            autoFlag = true;
+          } catch (e) {
+            console.error('auto-translate error:', e);
+            finalContent = p.content; // 失敗時は原文のまま
+          }
+        }
+
+        // embed を作成（翻訳済み or 原文）
         const embed = buildRelayEmbed({
           userTag: p.userTag,
           originGuild: p.originGuild,
           tz: p.tz,
           userAvatar: p.userAvatar,
-          content: p.content,
+          content: finalContent,
           userId: p.userId,
-          auto: !!p.targetLang,
+          auto: autoFlag,
           reply: p.replyExcerpt
         });
-        const sent = await ch.send({ embeds: [embed], files: p.files?.map(f => f.attachment) || [] });
+
+        const sent = await ch.send({
+          embeds: [embed],
+          files: p.files?.map((f) => f.attachment) || []
+        });
         await sent.react('👍');
       } catch (e) {
         console.error(`relay to ${channelId} failed:`, e);
@@ -528,7 +574,7 @@ app.get('/healthz', (_, res) => res.send('OK'));
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log('🚦 relay on', PORT));
 
-/* ────────── 11. login ────────── */
+/* ────────── 11. Bot ログイン ────────── */
 client.login(process.env.DISCORD_TOKEN)
   .then(() => console.log('✅ Logged in & ready'))
   .catch((e) => console.error('login error', e));
