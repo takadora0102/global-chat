@@ -2,10 +2,10 @@
  * index.js – Global Chat Bot  (2025-06-XX 修正版)
  *
  * 修正内容
- *  1. bot-announcements を GuildAnnouncement で作成し addFollower 方式に変更
- *  2. /setup 冒頭で deferReply して 3 秒タイムアウトを防止
- *  3. HUB 送信失敗時にログ＋自前リレーのフォールバック追加
- *  4. 主要処理のログを詳細に出力
+ *  1. bot-announcements をテキストチャンネルで作成し、サポート側 Announcement から addFollower 方式でフォロー
+ *  2. Redis 内に過去の壊れたエントリ（"[object Object]"）が残っていても続行できるよう、JSON.parse を安全化
+ *  3. メッセージ転送（フォールバック）および /relay エンドポイントのループで "safeParseChannel" を適用
+ *  4. /setup など従来機能はそのままに、ボット全体のエラー耐性とリレーの安定性を向上
  */
 
 import 'dotenv/config';
@@ -65,6 +65,17 @@ const client = new Client({
 /* ────────── Key Helpers ────────── */
 const kMsg  = (u) => `msg_cnt:${u}`;
 const kLike = (u) => `like_cnt:${u}`;
+
+/* ────────── 安全に JSON.parse を実行するヘルパー ────────── */
+async function safeParseChannel(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    console.warn('🗑 bad global:channels entry →', raw);
+    await redis.srem('global:channels', raw).catch(() => {});
+    return null;
+  }
+}
 
 /* ────────── 簡易翻訳 (Google 無認証) ────────── */
 async function translate(text, lang) {
@@ -232,11 +243,6 @@ async function handleSetup(interaction) {
   }
 }
 
-
-
-
-
-
 /* ────────── /profile ────────── */
 async function handleProfile(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -282,6 +288,7 @@ client.on(Events.InteractionCreate, async (i) => {
 
   // help / settings ボタン / SelectMenu など… (Part-3 で続く)
 });
+
 /* ────────── Help メニュー用定義 ────────── */
 const REGIONS = [
   { label: 'Asia', value: 'asia', emoji: '🌏' },
@@ -412,7 +419,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-/* ────────── Part-3 へ続く ────────── */
 /* ────────── MessageCreate ────────── */
 /**
  * 1. global-chat でメッセージを受け取ったら Redis カウンタを加算
@@ -469,8 +475,10 @@ client.on(Events.MessageCreate, async (msg) => {
         auto
       });
 
-      for (const c of await redis.smembers('global:channels')) {
-        const { guildId, channelId } = JSON.parse(c);
+      for (const raw of await redis.smembers('global:channels')) {
+        const parsed = await safeParseChannel(raw);
+        if (!parsed) continue;
+        const { guildId, channelId } = parsed;
         if (guildId === msg.guildId && channelId === msg.channelId) continue;  // 元チャンネルへは再送しない
         try {
           const ch = await client.channels.fetch(channelId);
@@ -520,6 +528,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     console.error('translate error:', err);
   }
 });
+
 /* ────────── Express リレー API ────────── */
 const app = express();
 app.use(bodyParser.json());
@@ -542,8 +551,10 @@ app.post('/relay', async (req, res) => {
       auto       : !!m.targetLang
     });
 
-    for (const c of await redis.smembers('global:channels')) {
-      const { guildId, channelId } = JSON.parse(c);
+    for (const raw of await redis.smembers('global:channels')) {
+      const parsed = await safeParseChannel(raw);
+      if (!parsed) continue;
+      const { guildId, channelId } = parsed;
 
       /* オリジナルのサーバー＆チャンネルには送り返さない */
       if (guildId === m.guildId && channelId === m.channelId) continue;
