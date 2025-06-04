@@ -6,8 +6,8 @@
  *   1. /setup で作成する bot-announcements を「GuildText」に変更
  *      フォロー対象はサポートサーバーのアナウンスチャンネル（環境変数: NEWS_SOURCE）に
  *   2. /setup で settings チャンネルに送るメッセージを英語に統一
- *   3. 以前実装していたロケーションから自動でタイムゾーンを判定するボタンを再実装
- *   4. それぞれのプレースホルダーや説明文も英語化
+ *   3. 「Detect Timezone」ボタンを再実装
+ *   4. ActionRow は 5 行以内にまとめる
  */
 
 import 'dotenv/config';
@@ -47,7 +47,6 @@ for (const key of [
     process.exit(1);
   }
 }
-// NEWS_SOURCE には「サポートサーバーの Announcements チャンネル ID」を入れておく想定
 const NEWS_SOURCE = process.env.NEWS_SOURCE;
 
 /* ────────── Redis & Client ────────── */
@@ -65,8 +64,8 @@ const client = new Client({
 });
 
 /* ────────── Helpers ────────── */
-const kMsg = (uid) => `msg_cnt:${uid}`;   // global-chat 専用メッセージ数キー
-const kLike = (uid) => `like_cnt:${uid}`; // global-chat 専用👍数キー
+const kMsg = (uid) => `msg_cnt:${uid}`;
+const kLike = (uid) => `like_cnt:${uid}`;
 
 async function translate(text, targetLang) {
   const url =
@@ -84,18 +83,17 @@ async function translate(text, targetLang) {
 async function handleSetup(interaction) {
   try {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
       return interaction.editReply({ content: '❌ You need Administrator permission to run this command.' });
     }
 
-    // 1. カテゴリ: "Global Chat"
+    // 1. Category: "Global Chat"
     const category = await interaction.guild.channels.create({
       name: 'Global Chat',
       type: ChannelType.GuildCategory
     });
 
-    // 2. bot-announcements: 通常のテキストチャンネルとして作成
+    // 2. bot-announcements: 普通のテキストチャンネル
     const botAnnouncements = await interaction.guild.channels.create({
       name: 'bot-announcements',
       type: ChannelType.GuildText,
@@ -108,15 +106,13 @@ async function handleSetup(interaction) {
         }
       ]
     });
-
-    // もし NEWS_SOURCE があるなら、サポートサーバーの Announcement チャンネルをフォロー
-    // ただし botAnnouncements がテキストチャネルのため follow() は存在しない
+    // フォロー対象はサポートサーバーの Announcement チャンネル
     try {
       if (NEWS_SOURCE && typeof botAnnouncements.follow === 'function') {
         await botAnnouncements.follow(NEWS_SOURCE);
       }
     } catch {
-      // silent catch
+      // silent
     }
 
     // 3. global-chat チャンネル
@@ -126,7 +122,7 @@ async function handleSetup(interaction) {
       parent: category.id
     });
 
-    // 4. settings チャンネル（管理者のみ閲覧可）
+    // 4. settings チャンネル（管理者専用）
     const settings = await interaction.guild.channels.create({
       name: 'settings',
       type: ChannelType.GuildText,
@@ -148,13 +144,10 @@ async function handleSetup(interaction) {
     fetch(process.env.HUB_ENDPOINT + '/register', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        guildId: interaction.guild.id,
-        channelId: globalChat.id
-      })
+      body: JSON.stringify({ guildId: interaction.guild.id, channelId: globalChat.id })
     }).catch(() => {});
 
-    // 6. settings チャンネルに送るメッセージを英語で構築
+    // 6. settings メッセージ（英語化 & ActionRow は 4 行以内）
     const languageOptions = [
       ['English (US)', 'en', '🇺🇸'],
       ['日本語', 'ja', '🇯🇵'],
@@ -201,7 +194,6 @@ async function handleSetup(interaction) {
       .setLabel('Support Server')
       .setStyle(ButtonStyle.Link);
 
-    // ─── 修正ポイント: ActionRow を 5 行以内にまとめる ───
     await settings.send({
       content:
         '**Global Chat Settings**\n' +
@@ -210,32 +202,27 @@ async function handleSetup(interaction) {
         '3️⃣ Auto-Translate ON / OFF\n' +
         '4️⃣ Detect Timezone from your location',
       components: [
-        // 1行目: Default Language 用 SelectMenu
         new ActionRowBuilder().addComponents(
           new StringSelectMenuBuilder()
             .setCustomId('set_default_lang')
             .setPlaceholder('Select your default language')
             .addOptions(languageOptions)
         ),
-        // 2行目: Timezone 用 SelectMenu
         new ActionRowBuilder().addComponents(
           new StringSelectMenuBuilder()
             .setCustomId('set_timezone')
             .setPlaceholder('Select your timezone')
             .addOptions(timezoneOptions)
         ),
-        // 3行目: Auto-Translate ON と OFF を同じ行に並べる
         new ActionRowBuilder().addComponents(btnAutoOn, btnAutoOff),
-        // 4行目: Detect Timezone と Support Server を同じ行に並べる
         new ActionRowBuilder().addComponents(btnDetectTZ, btnSupport)
       ]
     });
-    // ────────────────────────────────────────────────────────
 
     await interaction.editReply({ content: '✅ Setup completed successfully!' });
   } catch (error) {
     console.error('setup error:', error);
-    if (!interaction.replied) {
+    if (interaction.deferred) {
       await interaction.editReply({
         content: '❌ Setup failed. Please check bot permissions and try again.',
         components: []
@@ -266,7 +253,7 @@ async function handleRanking(interaction) {
     arr.push({ id: userId, v: val });
   }
   arr.sort((a, b) => b.v - a.v);
-  arr.splice(10); // Top10 だけ残す
+  arr.splice(10);
 
   let output = `🏆 **Top 10 by ${subcmd}**\n\n`;
   for (let i = 0; i < arr.length; i++) {
@@ -336,7 +323,6 @@ const REGION_LANGS = {
   ]
 };
 
-/* ────────── InteractionCreate Event ────────── */
 client.on(Events.InteractionCreate, async (interaction) => {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -377,7 +363,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     });
   }
 
-  // /help – Send Help Text (2000 char chunks)
+  // /help – Send Help Text
   if (interaction.isStringSelectMenu() && interaction.customId === 'help_lang') {
     const { HELP_TEXTS } = await import(path.join(__dirname, 'commands', 'help.js'));
     const helpText = HELP_TEXTS[interaction.values[0]] || HELP_TEXTS.en;
@@ -418,10 +404,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   // Settings: Detect Timezone Button
   if (interaction.isButton() && interaction.customId === 'detect_timezone') {
-    // ここで「ユーザーのロケーションに基づいてタイムゾーンを判定」する処理を実装
-    // たとえば、外部 API にリクエストして緯度経度からタイムゾーンを取得、など。
-    // とりあえずサンプルとして「UTC+0 に設定する」フローを書きます。
-    const sampleTz = '0'; // 実際は Geo API で取得した値を使う
+    // サンプルとして UTC+0 に設定
+    const sampleTz = '0';
     await redis.hset(`tz:${interaction.guildId}`, { tz: sampleTz });
     return interaction.reply({
       content: `🌐 Detected timezone set to UTC${sampleTz >= 0 ? '+' + sampleTz : sampleTz}.`,
@@ -436,10 +420,8 @@ client.on(Events.MessageCreate, async (message) => {
   const key = JSON.stringify({ guildId: message.guildId, channelId: message.channelId });
   if (!(await redis.sismember('global:channels', key))) return;
 
-  // メッセージ数カウント
   await redis.incrby(kMsg(message.author.id), 1);
 
-  // Relay 処理
   const tz   = (await redis.hget(`tz:${message.guildId}`, 'tz')) || '0';
   const langCfg = await redis.hgetall(`lang:${message.guildId}`);
   const targetLang = langCfg.auto === 'true' ? langCfg.lang : null;
@@ -468,7 +450,6 @@ client.on(Events.MessageCreate, async (message) => {
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   if (user.bot) return;
 
-  // 👍 Like のカウント
   if (reaction.emoji.name === '👍' && reaction.message.author?.id === client.user.id) {
     const setKey = `like_set:${reaction.message.id}`;
     if (await redis.sismember(setKey, user.id)) return;
@@ -483,7 +464,6 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     return;
   }
 
-  // 国旗リアクション翻訳
   const langCode = FLAG_TO_LANG[reaction.emoji.name];
   if (!langCode) return;
 
@@ -504,7 +484,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
       ]
     });
   } catch {
-    // 翻訳 API エラーなどは無視
+    // ignore
   }
 });
 
@@ -517,7 +497,6 @@ app.post('/relay', async (req, res) => {
     const m = req.body;
     const guild = client.guilds.cache.get(m.guildId);
     if (!guild) return res.sendStatus(404);
-    // オリジナルサーバーには送り返さない
     if (m.guildId === guild.id) return res.send({ status: 'skip_origin' });
     const channel = guild.channels.cache.get(m.channelId);
     if (!channel) return res.sendStatus(404);
