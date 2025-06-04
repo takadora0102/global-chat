@@ -566,14 +566,15 @@ app.post('/relay', async (req, res) => {
         // ─── ここで送信先サーバーの言語設定を Redis から取得 ───
         const destLang = await redis.hget(`lang:${ch.guildId}`, 'lang');
         const autoOn   = (await redis.hget(`lang:${ch.guildId}`, 'auto')) === 'true';
+        const srcLang  = await redis.hget(`lang:${p.guildId}`, 'lang');
 
         // デバッグ用ログ（Redis から取得できているか確認）
-        console.log(`→ Relay to ${channelId} (guild:${ch.guildId}): destLang=${destLang}, autoOn=${autoOn}`);
+        console.log(`→ Relay to ${channelId} (guild:${ch.guildId}): destLang=${destLang}, autoOn=${autoOn}, srcLang=${srcLang}`);
 
         let finalContent = p.content;
         let autoFlag = false;
-        // 「Auto-Translate ON」で言語設定があれば翻訳を試みる
-        if (autoOn && destLang) {
+        // 「Auto-Translate ON」で言語設定があり、送信元と異なる場合に翻訳
+        if (autoOn && destLang && destLang !== srcLang) {
           try {
             finalContent = await translate(p.content, destLang);
             autoFlag = true;

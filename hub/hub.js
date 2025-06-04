@@ -69,7 +69,7 @@ app.post('/publish', async (req, res) => {
     // 翻訳設定取得
     const langInfo = await redis.hgetall(`lang:${guildId}`);
     const lang     = langInfo?.lang ?? null;
-    const shouldTranslate = lang && langInfo?.autoTranslate !== 'false';
+    const shouldTranslate = lang && langInfo?.auto !== 'false';
     const targetLang      = shouldTranslate ? lang : null;
 
     // ログ：Relay 宛先と targetLang
