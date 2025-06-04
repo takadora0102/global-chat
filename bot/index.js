@@ -1,12 +1,12 @@
 /**
  * index.js – Global Chat Bot
- *  (2025-06-XX “地域→言語選択で Default Language” 実装版)
+ *  (2025-06-XX: 用途別メッセージ分割版)
  *
- * ＜変更ポイント＞  
- *  ・/setup の settings チャンネル内で、
- *    “Default Language” の部分を「2段階で選ぶ（地域→言語）」UI に変更  
- *  ・InteractionCreate 内に、customId=`setting_region` → `setting_lang` の処理を追加  
- *  ・Region/Language の定義は /help と同じく REGIONS / REGION_LANGS を利用
+ * ＜変更ポイント＞
+ *  ・Default Language 設定のための「地域→言語選択」を
+ *    元の settings メッセージを上書きせず、別メッセージで行うように修正
+ *  ・それに伴い、interaction.update → interaction.reply(ephemeral) に変更
+ *  ・他の設定（Timezone・Auto・Detect・Support）は常に settings メッセージに残る
  */
 
 import 'dotenv/config';
@@ -168,26 +168,16 @@ async function handleSetup(interaction) {
       { label: 'Oceania',       value: 'oceania',       emoji: '🌏' }
     ];
 
-    // (B) 各地域ごとに対応する言語コードの配列
-    const REGION_LANGS = {
-      asia:         ['en', 'ja', 'zh', 'zh-TW', 'ko', 'vi'],
-      europe:       ['en', 'es', 'fr', 'de', 'ru', 'uk', 'el'],
-      north_america:['en', 'es', 'fr'],
-      south_america:['es', 'pt-BR'],
-      mea:          ['ar', 'fa', 'he', 'tr', 'ur'],
-      oceania:      ['en', 'en-AU', 'en-NZ']
-    };
-
     // (C) タイムゾーン選択用リスト
     const tzOpts = [];
     for (let o = -11; o <= 13; o++) tzOpts.push({ label: `UTC${o >= 0 ? '+' + o : o}`, value: String(o) });
 
     // (D) UI の行をそれぞれ作成
-    // 地域選択メニュー（後から言語選択に置き換える）
+    // 地域選択メニュー（Default Language 用）
     const rowRegion = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId('setting_region')
-        .setPlaceholder('Select your region')
+        .setPlaceholder('Select your region for Default Language')
         .addOptions(REGIONS.map(r => ({
           label: r.label,
           value: r.value,
@@ -219,7 +209,7 @@ async function handleSetup(interaction) {
     await settings.send({
       content:
         '**Global Chat Settings**\n\n' +
-        '1️⃣ Default Language (Select Region ▶ Language)\n' +
+        '1️⃣ Default Language (Select Region below → separate message for Language)\n' +
         '2️⃣ Timezone\n' +
         '3️⃣ Auto-Translate ON / OFF\n' +
         '4️⃣ Detect Timezone\n',
@@ -237,8 +227,8 @@ async function handleSetup(interaction) {
 /* ────────── 4. /profile ────────── */
 async function handleProfile(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const m = await redis.get(kMsg(interaction.user.id)) || '0';
-  const l = await redis.get(kLike(interaction.user.id)) || '0';
+  const m = (await redis.get(kMsg(interaction.user.id))) || '0';
+  const l = (await redis.get(kLike(interaction.user.id))) || '0';
   await interaction.editReply(`📊 **${interaction.user.tag}**\n• Messages: ${m}\n• 👍: ${l}`);
 }
 
@@ -268,7 +258,7 @@ const HELP_REGIONS = [
   { label: 'Europe',        value: 'europe',        emoji: '🌍' },
   { label: 'North America', value: 'north_america', emoji: '🌎' },
   { label: 'South America', value: 'south_america', emoji: '🌎' },
-  { label: 'Middle East & Africa', value: 'mea',   emoji: '🌍' },
+  { label: 'Middle East & Africa', value: 'mea',    emoji: '🌍' },
   { label: 'Oceania',       value: 'oceania',       emoji: '🌏' }
 ];
 const HELP_REGION_LANGS = {
@@ -308,7 +298,7 @@ client.on(Events.InteractionCreate, async (i) => {
 
   // --- /help の 地域選択 → 言語選択 フロー ---
   if (i.isStringSelectMenu() && i.customId === 'help_region') {
-    const chosenRegion = i.values[0]; // 'asia' など
+    const chosenRegion = i.values[0];
     const langs = HELP_REGION_LANGS[chosenRegion] || ['en'];
     return i.update({
       content: '📖 Select a language:',
@@ -326,7 +316,6 @@ client.on(Events.InteractionCreate, async (i) => {
   }
   if (i.isStringSelectMenu() && i.customId === 'help_lang') {
     const chosenLang = i.values[0];
-    // commands/help.js から対応テキストを取り込む
     const __dir = path.dirname(fileURLToPath(import.meta.url));
     const { HELP_TEXTS } = await import(path.join(__dir, 'commands', 'help.js'));
     const text = HELP_TEXTS[chosenLang] || HELP_TEXTS.en;
@@ -339,11 +328,11 @@ client.on(Events.InteractionCreate, async (i) => {
     return;
   }
 
-  // --- settings チャンネルの Default Language: 地域→言語 フロー ---
+  // --- settings チャンネル: Default Language → 地域選択 フロー ---
   if (i.isStringSelectMenu() && i.customId === 'setting_region') {
     // ユーザーが地域を選択
     const chosenRegion = i.values[0];
-    // 先ほどと同じ REGION_LANGS をそのまま流用（A～C で定義済み）
+    // 言語リストを地域ごとに持つ定義
     const REGION_LANGS = {
       asia:         ['en','ja','zh','zh-TW','ko','vi'],
       europe:       ['en','es','fr','de','ru','uk','el'],
@@ -354,9 +343,9 @@ client.on(Events.InteractionCreate, async (i) => {
     };
     const langs = REGION_LANGS[chosenRegion] || ['en'];
 
-    // 「設定用言語選択UI」を返す
-    return i.update({
-      content: '📑 Default Language: Select your language',
+    // 新しいメッセージで言語選択メニューを【Ephemeral】で送る
+    return i.reply({
+      content: '📑 Now select your language:',
       components: [
         new ActionRowBuilder().addComponents(
           new StringSelectMenuBuilder()
@@ -366,19 +355,19 @@ client.on(Events.InteractionCreate, async (i) => {
               langs.map(code => ({ label: code, value: code }))
             )
         )
-      ]
+      ],
+      flags: MessageFlags.Ephemeral
     });
   }
 
+  // --- settings チャンネル: 言語を選択したとき ---
   if (i.isStringSelectMenu() && i.customId === 'setting_lang') {
-    // 地域→言語で最終的にユーザーが選んだ言語コードを i.values[0] で受け取る
     const chosenLang = i.values[0];
-    // Redis に { lang: chosenLang, auto: 'true' } をセット
     await redis.hset(`lang:${i.guildId}`, { lang: chosenLang, auto: 'true' });
     return i.reply({ content: `✅ Default Language set to **${chosenLang}** (Auto ON).`, flags: MessageFlags.Ephemeral });
   }
 
-  // --- (既存) settings の他の UI 処理（timezone, auto, detect） ---
+  // --- settings チャンネル: Timezone / Auto / Detect / Support ---
   if (i.isStringSelectMenu() && i.customId === 'set_timezone') {
     const tzValue = i.values[0];
     await redis.hset(`tz:${i.guildId}`, { tz: tzValue });
@@ -391,7 +380,6 @@ client.on(Events.InteractionCreate, async (i) => {
     return i.reply({ content: `🔄 Auto-Translate is now **${val === 'true' ? 'ON' : 'OFF'}**.`, flags: MessageFlags.Ephemeral });
   }
   if (i.isButton() && i.customId === 'detect_timezone') {
-    // デモとして UTC+0 を設定
     await redis.hset(`tz:${i.guildId}`, { tz: '0' });
     return i.reply({ content: '🌐 Detected Timezone set to UTC+0.', flags: MessageFlags.Ephemeral });
   }
@@ -443,7 +431,7 @@ client.on(Events.MessageCreate, async (msg) => {
   }).then(r => r.ok).catch(() => false);
 
   if (!ok) {
-    // フォールバック go
+    // フォールバック
     const embed = buildRelayEmbed({
       userTag: payload.userTag,
       originGuild: payload.originGuild,
@@ -475,7 +463,7 @@ client.on(Events.MessageReactionAdd, async (r, user) => {
   if (r.emoji.name === '👍' && r.message.author?.id === client.user.id) {
     const setKey = `like_set:${r.message.id}`;
     if (await redis.sismember(setKey, user.id)) return;
-    if ((await redis.scard(setKey)) >= 5) return r.users.remove(user.id).catch(() => { });
+    if ((await redis.scard(setKey)) >= 5) return r.users.remove(user.id).catch(() => {});
     await redis.sadd(setKey, user.id);
     await redis.expire(setKey, 60 * 60 * 24 * 7);
     const m = r.message.embeds[0]?.footer?.text.match(/UID:(\d+)/);
