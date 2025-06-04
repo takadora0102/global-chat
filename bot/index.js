@@ -236,6 +236,7 @@ async function handleSetup(interaction) {
 
 
 
+
 /* ────────── /profile ────────── */
 async function handleProfile(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
