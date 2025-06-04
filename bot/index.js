@@ -96,7 +96,7 @@ async function handleSetup(interaction) {
     // 2. bot-announcements: 普通のテキストチャンネル
     const botAnnouncements = await interaction.guild.channels.create({
       name: 'bot-announcements',
-      type: ChannelType.GuildText,
+      type: ChannelType.GuildAnnouncement,
       parent: category.id,
       permissionOverwrites: [
         {
