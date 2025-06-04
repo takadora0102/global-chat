@@ -178,7 +178,6 @@ async function handleSetup(interaction) {
         value: `${offset}`
       });
     }
-
     const btnAutoOn  = new ButtonBuilder()
       .setCustomId('autotrans_on')
       .setLabel('Auto-Translate ON')
@@ -428,7 +427,7 @@ client.on(Events.MessageCreate, async (message) => {
   await redis.incrby(kMsg(message.author.id), 1);
 
   const tz   = (await redis.hget(`tz:${message.guildId}`, 'tz')) || '0';
-  const langCfg = await redis.hgetall(`lang:${message.guildId}`);
+  const langCfg = (await redis.hgetall(`lang:${message.guildId}`)) || {};
   const targetLang = langCfg.auto === 'true' ? langCfg.lang : null;
 
   fetch(process.env.HUB_ENDPOINT + '/publish', {
