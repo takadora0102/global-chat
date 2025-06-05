@@ -153,7 +153,7 @@ async function handleSetup(interaction) {
 
     /* 3-6) Redis 登録＆HUB 連携 */
     await redis.sadd('global:channels', globalChat.id);
-    fetch(process.env.HUB_ENDPOINT + '/register', {
+    fetch(process.env.HUB_ENDPOINT + '/global/join', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ guildId: interaction.guild.id, channelId: globalChat.id })
