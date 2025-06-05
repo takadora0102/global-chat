@@ -7,6 +7,7 @@
  *  2. /relay 処理にデバッグ用ログを追加し、Redis から読まれる destLang・autoOnが正しく取得できているかを確認
  *  3. 条件を満たす場合にきちんと Google 翻訳を呼び出して、翻訳済みテキストを送信するように修正
  */
+// Requires Node.js 18 or later for global `fetch`. Install `node-fetch` or another polyfill if using an older Node.
 
 import 'dotenv/config';
 import {
