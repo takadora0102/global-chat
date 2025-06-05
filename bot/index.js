@@ -99,133 +99,165 @@ async function alreadySent(globalKey) {
   return false;
 }
 
+/* ────────── locale → UTC オフセット簡易マップ ────────── */
+const LOCALE_TZ_MAP = {
+  'ja': 9,             // 日本
+  'ko': 9,             // 韓国
+  'zh': 8, 'zh-CN': 8, // 中国
+  'zh-TW': 8,          // 台湾（代表値として +8）
+  'th': 7,
+  'vi': 7,
+  'id': 7,
+  'en-US': -5,         // 北米(代表値:EST)
+  'en-CA': -5,
+  'en-GB': 0,
+  'fr': 1,
+  'de': 1,
+  'es': 1,   'es-ES': 1,
+  'es-MX': -6,
+  'es-AR': -3,
+  'pt-BR': -3,
+  'ru': 3,
+  'uk': 2,
+  'tr': 3,
+  'ar': 3,
+  'fa': 3.5,
+  'hi': 5.5,
+  'bn': 6,
+  'he': 2
+  // 追加したい場合はここに書き足す
+};
+
 /* ────────── 3. /setup コマンド ────────── */
 async function handleSetup(interaction) {
   try {
+    /* (1) 権限チェック & defer */
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
       return interaction.editReply('❌ Need Administrator permission.');
     }
 
-    /* 3-1) カテゴリ作成 */
+    /* (2) “Global Chat” カテゴリ */
     const category = await interaction.guild.channels.create({
       name: 'Global Chat',
       type: ChannelType.GuildCategory
     });
 
-    /* 3-2) bot-announcements チャンネル (TEXT) */
+    /* (3) bot-announcements ＝普通の Text チャンネル */
     const botAnnouncements = await interaction.guild.channels.create({
       name: 'bot-announcements',
       type: ChannelType.GuildText,
       parent: category.id,
       permissionOverwrites: [
-        { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.SendMessages], type: OverwriteType.Role }
+        {
+          id:   interaction.guild.roles.everyone.id,
+          deny: [PermissionFlagsBits.SendMessages],
+          type: OverwriteType.Role
+        }
       ]
     });
 
-    /* 3-3) サポートサーバー Announcement をフォロー */
+    /*  サポート側 Announcement をフォロー  */
     try {
       const src = await client.channels.fetch(NEWS_SOURCE);
       if (src?.type === ChannelType.GuildAnnouncement && src.addFollower) {
         await src.addFollower(botAnnouncements.id, 'auto-follow');
         console.log('✓ followed support announcement');
       }
-    } catch (e) {
-      console.error('follow failed:', e);
-    }
+    } catch (e) { console.error('follow failed:', e); }
 
-    /* 3-4) global-chat チャンネル (TEXT) */
+    /* (4) global-chat 本体 */
     const globalChat = await interaction.guild.channels.create({
       name: 'global-chat',
       type: ChannelType.GuildText,
       parent: category.id
     });
 
-    /* 3-5) settings チャンネル (管理者専用) */
+    /* (5) settings （管理者のみ閲覧）*/
     const settings = await interaction.guild.channels.create({
       name: 'settings',
       type: ChannelType.GuildText,
       parent: category.id,
       permissionOverwrites: [
-        { id: interaction.guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel], type: OverwriteType.Role }
+        {
+          id:   interaction.guild.roles.everyone.id,
+          deny: [PermissionFlagsBits.ViewChannel],
+          type: OverwriteType.Role
+        }
       ]
     });
 
-    /* 3-6) Redis 登録＆HUB 連携 */
+    /* (6) Redis 登録 + HUB 連携 */
     await redis.sadd('bot:channels', globalChat.id);
     fetch(process.env.HUB_ENDPOINT + '/global/join', {
-      method: 'POST',
+      method:  'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ guildId: interaction.guild.id, channelId: globalChat.id })
+      body:    JSON.stringify({ guildId: interaction.guild.id, channelId: globalChat.id })
     }).catch(() => {});
 
-    /* ────────── Settings に送る UI メッセージ ────────── */
+    /* ────────── Settings 用 UI ────────── */
 
-    // (A) 地域選択リスト
+    /* A) 地域セレクト（後続で言語セレクトへ分岐） */
     const REGIONS = [
-      { label: 'Asia',          value: 'asia',          emoji: '🌏' },
-      { label: 'Europe',        value: 'europe',        emoji: '🌍' },
-      { label: 'North America', value: 'north_america', emoji: '🌎' },
-      { label: 'South America', value: 'south_america', emoji: '🌎' },
-      { label: 'Middle East & Africa', value: 'mea',    emoji: '🌍' },
-      { label: 'Oceania',       value: 'oceania',       emoji: '🌏' }
+      { label: 'Asia',                   value: 'asia',          emoji: '🌏' },
+      { label: 'Europe',                 value: 'europe',        emoji: '🌍' },
+      { label: 'North America',          value: 'north_america', emoji: '🌎' },
+      { label: 'South America',          value: 'south_america', emoji: '🌎' },
+      { label: 'Middle East & Africa',   value: 'mea',           emoji: '🌍' },
+      { label: 'Oceania',                value: 'oceania',       emoji: '🌏' }
     ];
-
-    // (C) タイムゾーン選択リスト
-    const tzOpts = [];
-    for (let o = -11; o <= 13; o++) tzOpts.push({ label: `UTC${o >= 0 ? '+' + o : o}`, value: String(o) });
-
-    // (D) UI の行を作成
-    // 地域選択メニュー（Default Language 用）
     const rowRegion = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId('setting_region')
-        .setPlaceholder('Select your region for Default Language')
-        .addOptions(REGIONS.map(r => ({
-          label: r.label,
-          value: r.value,
-          emoji: r.emoji
-        })))
+        .setPlaceholder('Select region (for default language)')
+        .addOptions(REGIONS.map(r => ({ label: r.label, value: r.value, emoji: r.emoji })))
     );
 
-    // タイムゾーン選択メニュー
+    /* B) タイムゾーンセレクト（UTC-11 〜 UTC+13 → 25 個ちょうど） */
+    const tzOpts = [];
+    for (let o = -11; o <= 13; o++) {
+      tzOpts.push({ label: `UTC${o >= 0 ? '+' + o : o}`, value: String(o) });
+    }
     const rowTZ = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId('set_timezone')
-        .setPlaceholder('Select timezone')
+        .setPlaceholder('Select timezone (UTC offset)')
         .addOptions(tzOpts)
     );
 
-    // Auto-Translate ON/OFF ボタン
+    /* C) Auto-Translate ON/OFF */
     const rowAuto = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('autotrans_on').setLabel('Auto ON').setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId('autotrans_off').setLabel('OFF').setStyle(ButtonStyle.Danger)
     );
 
-    // Detect TZ ボタン & Support サーバーリンク
+    /* D) Detect TZ（locale 推定）& Support サーバー */
     const rowMisc = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('detect_timezone').setLabel('Detect TZ').setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setURL(process.env.SUPPORT_SERVER_URL).setLabel('Support').setStyle(ButtonStyle.Link)
     );
 
-    // settings チャンネルへ初回メッセージ送信
+    /* E) settings チャンネルへ送信 */
     await settings.send({
       content:
         '**Global Chat Settings**\n\n' +
-        '1️⃣ Default Language (Select Region below → separate message for Language)\n' +
+        '1️⃣ Default Language (select region → bot asks language)\n' +
         '2️⃣ Timezone\n' +
         '3️⃣ Auto-Translate ON / OFF\n' +
-        '4️⃣ Detect Timezone\n',
+        '4️⃣ Detect Timezone (based on your Discord locale)\n',
       components: [rowRegion, rowTZ, rowAuto, rowMisc]
     });
 
-    /* 3-7) 完了返信 */
+    /* 完了 */
     await interaction.editReply('✅ Setup completed!');
   } catch (e) {
     console.error('setup error:', e);
-    if (interaction.deferred) await interaction.editReply('❌ Setup failed. Check permissions & ENV.');
+    if (interaction.deferred) {
+      await interaction.editReply('❌ Setup failed. Check permissions / ENV.');
+    }
   }
 }
+
 
 /* ────────── 4. /profile コマンド ────────── */
 async function handleProfile(interaction) {
