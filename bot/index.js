@@ -421,7 +421,7 @@ client.on(Events.MessageCreate, async (msg) => {
   /* 3) メタ情報（タイムゾーン・言語・自動翻訳設定）を取得 */
   const tz   = (await redis.hget(`tz:${msg.guildId}`, 'tz')) ?? '0';
   const lang = (await redis.hget(`lang:${msg.guildId}`, 'lang')) ?? 'en';
-  const auto = (await redis.hget(`lang:${msg.guildId}`, 'auto')) === 'true';
+  const auto = (await redis.hget(`lang:${msg.guildId}`, 'auto')) !== 'false';
 
   /* 4) ペイロードを作成 */
   const payload = {
@@ -565,7 +565,7 @@ app.post('/relay', async (req, res) => {
 
         // ─── ここで送信先サーバーの言語設定を Redis から取得 ───
         const destLang = await redis.hget(`lang:${ch.guildId}`, 'lang');
-        const autoOn   = (await redis.hget(`lang:${ch.guildId}`, 'auto')) === 'true';
+        const autoOn   = (await redis.hget(`lang:${ch.guildId}`, 'auto')) !== 'false';
         const srcLang  = await redis.hget(`lang:${p.guildId}`, 'lang');
 
         // デバッグ用ログ（Redis から取得できているか確認）
