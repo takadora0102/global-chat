@@ -4,7 +4,7 @@
  *
  * ＜主な変更点＞
  *  1. MessageCreate→「返信(Reply)として引用されたメッセージ」が画像だった場合も画像の URL を埋め込む
- *  2. /relay 処理にデバッグ用ログを追加し、Redis から読まれる destLang・autoOn が正しく取得できているかを確認
+ *  2. /relay 処理にデバッグ用ログを追加し、Redis から読まれる destLang・autoOnが正しく取得できているかを確認
  *  3. 条件を満たす場合にきちんと Google 翻訳を呼び出して、翻訳済みテキストを送信するように修正
  */
 
@@ -152,8 +152,8 @@ async function handleSetup(interaction) {
     });
 
     /* 3-6) Redis 登録＆HUB 連携 */
-    await redis.sadd('global:channels', globalChat.id);
-    fetch(process.env.HUB_ENDPOINT + '/register', {
+    await redis.sadd('bot:channels', globalChat.id);
+    fetch(process.env.HUB_ENDPOINT + '/global/join', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ guildId: interaction.guild.id, channelId: globalChat.id })
@@ -388,7 +388,7 @@ client.on(Events.InteractionCreate, async (i) => {
 client.on(Events.MessageCreate, async (msg) => {
   // Bot 自身のメッセージや、Global Chat につながっていないチャンネルは無視
   if (msg.author.bot) return;
-  if (!(await redis.sismember('global:channels', msg.channelId))) return;
+  if (!(await redis.sismember('bot:channels', msg.channelId))) return;
 
   /* 1) メッセージ統計 */
   await redis.incrby(kMsg(msg.author.id), 1);
@@ -468,8 +468,8 @@ client.on(Events.MessageCreate, async (msg) => {
       reply: payload.replyExcerpt
     });
 
-    // Redis に登録されているすべての global:channels を巡回
-    const channelIds = await redis.smembers('global:channels');
+    // Redis に登録されているすべての bot:channels を巡回
+    const channelIds = await redis.smembers('bot:channels');
     for (const channelId of channelIds) {
       // 自分自身の投稿チャンネルには送り返さない
       if (channelId === msg.channelId) continue;
@@ -553,8 +553,8 @@ app.use(bodyParser.json());
 app.post('/relay', async (req, res) => {
   try {
     const p = req.body;
-    // p: { globalId, guildId, channelId, userTag, userAvatar, originGuild, tz, content, replyExcerpt, files, targetLang, userId }
-    for (const channelId of await redis.smembers('global:channels')) {
+    // p: { globalId, guildId, channelId, userTag, userAvatar, originGuild, tz,content, replyExcerpt, files, targetLang, userId }
+    for (const channelId of await redis.smembers('bot:channels')) {
       if (channelId === p.channelId) continue;
 
       const dupKey = `${p.globalId}:${channelId}`;
@@ -566,14 +566,15 @@ app.post('/relay', async (req, res) => {
         // ─── ここで送信先サーバーの言語設定を Redis から取得 ───
         const destLang = await redis.hget(`lang:${ch.guildId}`, 'lang');
         const autoOn   = (await redis.hget(`lang:${ch.guildId}`, 'auto')) === 'true';
+        const srcLang  = await redis.hget(`lang:${p.guildId}`, 'lang');
 
         // デバッグ用ログ（Redis から取得できているか確認）
-        console.log(`→ Relay to ${channelId} (guild:${ch.guildId}): destLang=${destLang}, autoOn=${autoOn}`);
+        console.log(`→ Relay to ${channelId} (guild:${ch.guildId}): destLang=${destLang}, autoOn=${autoOn}, srcLang=${srcLang}`);
 
         let finalContent = p.content;
         let autoFlag = false;
-        // 「Auto-Translate ON」で言語設定があれば翻訳を試みる
-        if (autoOn && destLang) {
+        // 「Auto-Translate ON」で言語設定があり、送信元と異なる場合に翻訳
+        if (autoOn && destLang && destLang !== srcLang) {
           try {
             finalContent = await translate(p.content, destLang);
             autoFlag = true;
