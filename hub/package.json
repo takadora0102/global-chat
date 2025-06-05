@@ -1,7 +1,7 @@
 {
   "name": "hub",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "hub.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
