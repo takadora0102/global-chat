@@ -27,7 +27,7 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import { randomUUID } from 'crypto';
 import { Redis } from '@upstash/redis';
-import { FLAG_TO_LANG } from './constants.js';
+import { FLAG_TO_LANG, REGIONS, REGION_LANGS } from './constants.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -198,14 +198,6 @@ async function handleSetup(interaction) {
     /* ────────── Settings 用 UI ────────── */
 
     /* A) 地域セレクト（後続で言語セレクトへ分岐） */
-    const REGIONS = [
-      { label: 'Asia',                   value: 'asia',          emoji: '🌏' },
-      { label: 'Europe',                 value: 'europe',        emoji: '🌍' },
-      { label: 'North America',          value: 'north_america', emoji: '🌎' },
-      { label: 'South America',          value: 'south_america', emoji: '🌎' },
-      { label: 'Middle East & Africa',   value: 'mea',           emoji: '🌍' },
-      { label: 'Oceania',                value: 'oceania',       emoji: '🌏' }
-    ];
     const rowRegion = new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId('setting_region')
@@ -292,22 +284,7 @@ async function handleRanking(interaction) {
 }
 
 /* ────────── 6. /help UI (地域→言語) ────────── */
-const HELP_REGIONS = [
-  { label: 'Asia',          value: 'asia',          emoji: '🌏' },
-  { label: 'Europe',        value: 'europe',        emoji: '🌍' },
-  { label: 'North America', value: 'north_america', emoji: '🌎' },
-  { label: 'South America', value: 'south_america', emoji: '🌎' },
-  { label: 'Middle East & Africa', value: 'mea',    emoji: '🌍' },
-  { label: 'Oceania',       value: 'oceania',       emoji: '🌏' }
-];
-const HELP_REGION_LANGS = {
-  asia:         ['en','ja','zh','zh-TW','ko','vi'],
-  europe:       ['en','es','fr','de','ru','uk','el'],
-  north_america:['en','es','fr'],
-  south_america:['es','pt-BR'],
-  mea:          ['ar','fa','he','tr','ur'],
-  oceania:      ['en','en-AU','en-NZ']
-};
+
 
 /* ────────── 7. InteractionCreate 全体 ────────── */
 client.on(Events.InteractionCreate, async (i) => {
@@ -326,7 +303,7 @@ client.on(Events.InteractionCreate, async (i) => {
               .setCustomId('help_region')
               .setPlaceholder('Pick region')
               .addOptions(
-                HELP_REGIONS.map(r => ({ label: r.label, value: r.value, emoji: r.emoji }))
+                REGIONS.map(r => ({ label: r.label, value: r.value, emoji: r.emoji }))
               )
           )
         ],
@@ -338,7 +315,7 @@ client.on(Events.InteractionCreate, async (i) => {
   // --- /help の 地域→言語 フロー ---
   if (i.isStringSelectMenu() && i.customId === 'help_region') {
     const chosenRegion = i.values[0];
-    const langs = HELP_REGION_LANGS[chosenRegion] || ['en'];
+    const langs = REGION_LANGS[chosenRegion] || ['en'];
     return i.update({
       content: '📖 Select a language:',
       components: [
@@ -368,14 +345,6 @@ client.on(Events.InteractionCreate, async (i) => {
   // --- settings: Default Language → 地域選択 → 言語選択 ---
   if (i.isStringSelectMenu() && i.customId === 'setting_region') {
     const chosenRegion = i.values[0];
-    const REGION_LANGS = {
-      asia:         ['en','ja','zh','zh-TW','ko','vi'],
-      europe:       ['en','es','fr','de','ru','uk','el'],
-      north_america:['en','es','fr'],
-      south_america:['es','pt-BR'],
-      mea:          ['ar','fa','he','tr','ur'],
-      oceania:      ['en','en-AU','en-NZ']
-    };
     const langs = REGION_LANGS[chosenRegion] || ['en'];
 
     // ✓: 別メッセージ (Ephemeral) で言語選択を促す
