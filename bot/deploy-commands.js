@@ -18,6 +18,14 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import 'dotenv/config';
 
+// ----- Environment Variables Check -----
+for (const k of ['DISCORD_TOKEN', 'CLIENT_ID']) {
+  if (!process.env[k]) {
+    console.error(`❌ Missing env: ${k}`);
+    process.exit(1);
+  }
+}
+
 const commands = [];
 const commandsPath = path.join(process.cwd(), 'commands');
 
