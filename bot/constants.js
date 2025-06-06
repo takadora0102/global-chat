@@ -64,3 +64,24 @@ export const FLAG_TO_LANG = {
   '🇮🇩': 'id',
   '🇸🇦': 'ar'
 };
+
+/**
+ * 地域 → 言語コード一覧のマッピング
+ */
+export const REGIONS = [
+  { label: 'Asia',                   value: 'asia',          emoji: '🌏' },
+  { label: 'Europe',                 value: 'europe',        emoji: '🌍' },
+  { label: 'North America',          value: 'north_america', emoji: '🌎' },
+  { label: 'South America',          value: 'south_america', emoji: '🌎' },
+  { label: 'Middle East & Africa',   value: 'mea',           emoji: '🌍' },
+  { label: 'Oceania',                value: 'oceania',       emoji: '🌏' }
+];
+
+export const REGION_LANGS = {
+  asia:         ['en','ja','zh','zh-TW','ko','vi'],
+  europe:       ['en','es','fr','de','ru','uk','el'],
+  north_america:['en','es','fr'],
+  south_america:['es','pt-BR'],
+  mea:          ['ar','fa','he','tr','ur'],
+  oceania:      ['en','en-AU','en-NZ']
+};
