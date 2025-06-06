@@ -81,8 +81,9 @@ async function translate(text, lang) {
 
 /* Relay Embed ビルダー */
 function buildRelayEmbed({ userTag, originGuild, tz, userAvatar, content, userId, auto, reply }) {
+  const sign = tz >= 0 ? '+' + tz : tz;
   const eb = new EmbedBuilder()
-    .setAuthor({ name: `${userTag} [${originGuild} UTC${tz}]`, iconURL: userAvatar })
+    .setAuthor({ name: `${userTag} [${originGuild} UTC${sign}]`, iconURL: userAvatar })
     .setFooter({ text: `UID:${userId} 🌐 global chat${auto ? ' • auto-translated' : ''}` })
     .setTimestamp(Date.now());
 
