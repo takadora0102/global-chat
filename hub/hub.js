@@ -7,6 +7,18 @@ import bodyParser from 'body-parser';
 import fetch from 'node-fetch';
 import { Redis } from '@upstash/redis';
 
+// ----- Environment Variables Check -----
+for (const k of [
+  'UPSTASH_REDIS_REST_URL',
+  'UPSTASH_REDIS_REST_TOKEN',
+  'BOT_ENDPOINT'
+]) {
+  if (!process.env[k]) {
+    console.error(`❌ Missing env: ${k}`);
+    process.exit(1);
+  }
+}
+
 const app = express();
 app.use(bodyParser.json());
 
