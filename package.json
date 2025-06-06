@@ -1,8 +1,13 @@
 {
   "name": "global-chat-root",
   "private": true,
-  "workspaces": ["bot"],
+  "workspaces": [
+    "bot"
+  ],
   "scripts": {
     "test": "npm --workspace bot test"
+  },
+  "overrides": {
+    "undici": "6.21.3"
   }
 }

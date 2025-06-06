@@ -11,9 +11,13 @@
     "@upstash/redis": "^1.x.x",
     "discord.js": "^14.x.x",
     "dotenv": "^16.x.x",
-    "express": "^4.x.x"
+    "express": "^4.x.x",
+    "undici": "6.21.3"
   },
   "devDependencies": {
     "jest": "^29.7.0"
+  },
+  "overrides": {
+    "undici": "6.21.3"
   }
 }
