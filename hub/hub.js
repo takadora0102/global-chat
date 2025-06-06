@@ -3,12 +3,11 @@
  */
 
 import express from 'express';
-import bodyParser from 'body-parser';
 import fetch from 'node-fetch';
 import { Redis } from '@upstash/redis';
 
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
 const redis = new Redis({
   url:   process.env.UPSTASH_REDIS_REST_URL,
