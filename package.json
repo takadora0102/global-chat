@@ -1,0 +1,8 @@
+{
+  "name": "global-chat-root",
+  "private": true,
+  "workspaces": ["bot"],
+  "scripts": {
+    "test": "npm --workspace bot test"
+  }
+}
