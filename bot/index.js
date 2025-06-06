@@ -411,8 +411,15 @@ client.on(Events.InteractionCreate, async (i) => {
     return i.reply({ content: `🔄 Auto-Translate is now **${val === 'true' ? 'ON' : 'OFF'}**.`, flags: MessageFlags.Ephemeral });
   }
   if (i.isButton() && i.customId === 'detect_timezone') {
-    await redis.hset(`tz:${i.guildId}`, { tz: '0' });
-    return i.reply({ content: '🌐 Detected Timezone set to UTC+0.', flags: MessageFlags.Ephemeral });
+    const loc = i.locale ?? i.user?.locale;
+    let tz = LOCALE_TZ_MAP[loc];
+    if (tz === undefined && typeof loc === 'string' && loc.includes('-')) {
+      tz = LOCALE_TZ_MAP[loc.split('-')[0]];
+    }
+    if (tz === undefined) tz = 0;
+    await redis.hset(`tz:${i.guildId}`, { tz: String(tz) });
+    const sign = tz >= 0 ? '+' : '';
+    return i.reply({ content: `🌐 Detected Timezone set to UTC${sign}${tz}.`, flags: MessageFlags.Ephemeral });
   }
 });
 
