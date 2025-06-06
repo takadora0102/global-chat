@@ -1,15 +1,19 @@
 {
   "name": "global-chat-bot",
   "version": "1.0.0",
-  "type": "module",        
+  "type": "module",
   "scripts": {
     "deploy-commands": "node deploy-commands.js",
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
   },
   "dependencies": {
+    "@upstash/redis": "^1.x.x",
     "discord.js": "^14.x.x",
     "dotenv": "^16.x.x",
-    "express": "^4.x.x",
-    "@upstash/redis": "^1.x.x"
+    "express": "^4.x.x"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
   }
 }
