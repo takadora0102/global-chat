@@ -27,7 +27,16 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import { randomUUID } from 'crypto';
 import { Redis } from '@upstash/redis';
-import { FLAG_TO_LANG, REGIONS, REGION_LANGS } from './constants.js';
+import {
+  FLAG_TO_LANG,
+  REGIONS,
+  REGION_LANGS,
+  CHANNEL_NAME_SETUP,
+  SETUP_PASSWORD,
+  RATE_LIMIT_RPM,
+  RATE_LIMIT_RPD,
+  FALLBACK_API_URL
+} from './constants.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,7 +47,8 @@ for (const k of [
   'UPSTASH_REDIS_REST_URL',
   'UPSTASH_REDIS_REST_TOKEN',
   'SUPPORT_SERVER_URL',
-  'NEWS_SOURCE'
+  'NEWS_SOURCE',
+  'FALLBACK_API_URL'
 ]) {
   if (!process.env[k]) {
     console.error(`❌ Missing env: ${k}`);
@@ -66,17 +76,73 @@ const client = new Client({
 const kMsg = (u) => `msg_cnt:${u}`;
 const kLike = (u) => `like_cnt:${u}`;
 
-/* Google 翻訳（認証不要の public API） */
-async function translate(text, lang) {
-  const url =
-    'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&dt=t&tl=' +
-    lang +
-    '&q=' +
-    encodeURIComponent(text);
+// ---- Translation Utilities ----
+async function callFreeTranslateAPI(text, lang) {
+  const url = `${FALLBACK_API_URL}&tl=${lang}&q=${encodeURIComponent(text)}`;
   const r = await fetch(url);
   if (!r.ok) throw new Error('translate api fail');
   const j = await r.json();
   return j[0].map((v) => v[0]).join('');
+}
+
+async function callGeminiTranslateAPI(text, lang) {
+  const endpoint =
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+  const payload = {
+    contents: [{
+      role: 'user',
+      parts: [{ text: `Translate the following text to ${lang}:\n\n${text}` }]
+    }]
+  };
+  const r = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!r.ok) throw new Error(`gemini api fail: ${r.status}`);
+  const j = await r.json();
+  const parts = j.candidates?.[0]?.content?.parts || [];
+  return parts.map(p => p.text).join('');
+}
+
+async function checkGeminiRate(guildId) {
+  try {
+    const rpmKey = `gemini:rpm:${guildId}`;
+    const rpmCount = await redis.incr(rpmKey);
+    if (rpmCount === 1) await redis.expire(rpmKey, 60);
+
+    const today = new Date().toISOString().slice(0, 10);
+    const rpdKey = `gemini:rpd:${guildId}:${today}`;
+    const rpdCount = await redis.incr(rpdKey);
+    if (rpdCount === 1) await redis.expire(rpdKey, 86400);
+
+    return rpmCount <= RATE_LIMIT_RPM && rpdCount <= RATE_LIMIT_RPD;
+  } catch (e) {
+    console.error('rate limit check error:', e);
+    return false;
+  }
+}
+
+async function translate(text, lang, guildId) {
+  let useGemini = false;
+  try {
+    const flag = await redis.get(`gemini:enabled:${guildId}`);
+    if (flag === 'true') {
+      const within = await checkGeminiRate(guildId);
+      if (within) useGemini = true;
+    }
+  } catch (e) {
+    console.error('gemini check error:', e);
+  }
+
+  if (useGemini) {
+    try {
+      return await callGeminiTranslateAPI(text, lang);
+    } catch (e) {
+      console.error('gemini api error, falling back:', e);
+    }
+  }
+  return await callFreeTranslateAPI(text, lang);
 }
 
 /* Relay Embed ビルダー */
@@ -176,7 +242,7 @@ async function handleSetup(interaction) {
 
     /* (5) settings （管理者のみ閲覧）*/
     const settings = await interaction.guild.channels.create({
-      name: 'settings',
+      name: CHANNEL_NAME_SETUP,
       type: ChannelType.GuildText,
       parent: category.id,
       permissionOverwrites: [
@@ -240,6 +306,9 @@ async function handleSetup(interaction) {
         '4️⃣ Detect Timezone (based on your Discord locale)\n',
       components: [rowRegion, rowTZ, rowAuto, rowMisc]
     });
+
+    // Gemini translation setup
+    await settings.send('パスワードを送信してください');
 
     /* 完了 */
     await interaction.editReply('✅ Setup completed!');
@@ -397,6 +466,18 @@ client.on(Events.InteractionCreate, async (i) => {
 client.on(Events.MessageCreate, async (msg) => {
   // Bot 自身のメッセージや、Global Chat につながっていないチャンネルは無視
   if (msg.author.bot) return;
+  if (msg.channel.name === CHANNEL_NAME_SETUP) {
+    if (msg.member?.permissions.has(PermissionFlagsBits.Administrator) &&
+        msg.content.trim() === SETUP_PASSWORD) {
+      try {
+        await redis.set(`gemini:enabled:${msg.guildId}`, 'true');
+        await msg.reply('Gemini 翻訳が有効化されました');
+      } catch (e) {
+        console.error('gemini enable error:', e);
+      }
+    }
+    return;
+  }
   if (!(await redis.sismember('bot:channels', msg.channelId))) return;
 
   /* 1) メッセージ統計 */
@@ -542,7 +623,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
   const original = msg.content || msg.embeds[0]?.description || '';
   if (!original) return;
   try {
-    const translated = await translate(original, langCode);
+    const translated = await translate(original, langCode, msg.guildId);
     await msg.reply({
       embeds: [
         new EmbedBuilder()
@@ -585,7 +666,7 @@ app.post('/relay', async (req, res) => {
         // 「Auto-Translate ON」で言語設定があり、送信元と異なる場合に翻訳
         if (autoOn && destLang && destLang !== srcLang) {
           try {
-            finalContent = await translate(p.content, destLang);
+            finalContent = await translate(p.content, destLang, ch.guildId);
             autoFlag = true;
           } catch (e) {
             console.error('auto-translate error:', e);
