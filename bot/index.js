@@ -129,7 +129,8 @@ async function checkGeminiRate(guildId) {
 
 async function translate(text, lang, guildId) {
   if (!process.env.GEMINI_API_KEY) {
-    return await callFreeTranslateAPI(text, lang);
+    const t = await callFreeTranslateAPI(text, lang);
+    return { text: t, source: 'google' };
   }
 
   let useGemini = false;
@@ -145,20 +146,22 @@ async function translate(text, lang, guildId) {
 
   if (useGemini) {
     try {
-      return await callGeminiTranslateAPI(text, lang);
+      const t = await callGeminiTranslateAPI(text, lang);
+      return { text: t, source: 'gemini' };
     } catch (e) {
       console.error('gemini api error, falling back:', e);
     }
   }
-  return await callFreeTranslateAPI(text, lang);
+  const fb = await callFreeTranslateAPI(text, lang);
+  return { text: fb, source: 'google' };
 }
 
 /* Relay Embed ビルダー */
-function buildRelayEmbed({ userTag, originGuild, tz, userAvatar, content, userId, auto, reply }) {
+function buildRelayEmbed({ userTag, originGuild, tz, userAvatar, content, userId, auto, source, reply }) {
   const sign = tz >= 0 ? '+' + tz : tz;
   const eb = new EmbedBuilder()
     .setAuthor({ name: `${userTag} [${originGuild} UTC${sign}]`, iconURL: userAvatar })
-    .setFooter({ text: `UID:${userId} 🌐 global chat${auto ? ' • auto-translated' : ''}` })
+    .setFooter({ text: `UID:${userId} 🌐 global chat${auto ? ` • auto-translated [${source === 'gemini' ? 'G' : 'D'}]` : ''}` })
     .setTimestamp(Date.now());
 
   if (reply) eb.addFields({ name: '↪️ Reply to', value: reply.slice(0, 256) });
@@ -563,6 +566,7 @@ client.on(Events.MessageCreate, async (msg) => {
       content: payload.content,
       userId: payload.userId,
       auto: !!payload.targetLang,
+      source: 'google',
       reply: payload.replyExcerpt
     });
 
@@ -631,12 +635,12 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
   const original = msg.content || msg.embeds[0]?.description || '';
   if (!original) return;
   try {
-    const translated = await translate(original, langCode, msg.guildId);
+    const { text: translated, source } = await translate(original, langCode, msg.guildId);
     await msg.reply({
       embeds: [
         new EmbedBuilder()
           .setDescription(`> ${original}\n\n**${translated}**`)
-          .setFooter({ text: `🌐 translated to ${langCode}` })
+          .setFooter({ text: `🌐 translated to ${langCode} [${source === 'gemini' ? 'G' : 'D'}]` })
       ]
     });
   } catch (e) {
@@ -671,14 +675,18 @@ app.post('/relay', async (req, res) => {
 
         let finalContent = p.content;
         let autoFlag = false;
+        let transSource = 'google';
         // 「Auto-Translate ON」で言語設定があり、送信元と異なる場合に翻訳
         if (autoOn && destLang && destLang !== srcLang) {
           try {
-            finalContent = await translate(p.content, destLang, ch.guildId);
+            const { text: t, source } = await translate(p.content, destLang, ch.guildId);
+            finalContent = t;
+            transSource = source;
             autoFlag = true;
           } catch (e) {
             console.error('auto-translate error:', e);
             finalContent = p.content;
+            transSource = 'google';
           }
         }
 
@@ -690,6 +698,7 @@ app.post('/relay', async (req, res) => {
           content: finalContent,
           userId: p.userId,
           auto: autoFlag,
+          source: transSource,
           reply: p.replyExcerpt
         });
 
