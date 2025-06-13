@@ -40,6 +40,7 @@ Node.js 18 以上がインストールされていることを確認してくだ
 - `NEWS_SOURCE` – フォローするアナウンスチャンネル ID
 - `CLIENT_ID` – スラッシュコマンド登録用のアプリケーション ID
 - `PORT` – (任意) ボット側の HTTP サーバー待ち受けポート
+- `GEMINI_API_KEY` – (任意) Gemini 翻訳を利用するための API キー
 
 ### Hub 用
 - `BOT_ENDPOINT` – ボットの `/relay` エンドポイント URL
