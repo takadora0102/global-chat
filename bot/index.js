@@ -57,6 +57,10 @@ for (const k of [
 }
 const NEWS_SOURCE = process.env.NEWS_SOURCE;
 
+if (!process.env.GEMINI_API_KEY) {
+  console.log('ℹ️ GEMINI_API_KEY not set; Gemini translation disabled');
+}
+
 /* ────────── 1. Redis & Client 初期化 ────────── */
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
@@ -85,6 +89,7 @@ async function callFreeTranslateAPI(text, lang) {
   return j[0].map((v) => v[0]).join('');
 }
 
+// Call Gemini translation API (requires GEMINI_API_KEY)
 async function callGeminiTranslateAPI(text, lang) {
   const endpoint =
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
@@ -124,6 +129,10 @@ async function checkGeminiRate(guildId) {
 }
 
 async function translate(text, lang, guildId) {
+  if (!process.env.GEMINI_API_KEY) {
+    return await callFreeTranslateAPI(text, lang);
+  }
+
   let useGemini = false;
   try {
     const flag = await redis.get(`gemini:enabled:${guildId}`);
