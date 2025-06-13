@@ -85,3 +85,15 @@ export const REGION_LANGS = {
   mea:          ['ar','fa','he','tr','ur'],
   oceania:      ['en','en-AU','en-NZ']
 };
+
+// ----- Gemini Translation Feature -----
+// Channel name for setup/password authentication
+export const CHANNEL_NAME_SETUP = 'translate-setup';
+// Password required to enable Gemini translation
+export const SETUP_PASSWORD = 'ct1204';
+// Rate limits for Gemini API usage
+export const RATE_LIMIT_RPM = 15;   // requests per minute
+export const RATE_LIMIT_RPD = 1500; // requests per day
+// Public translation endpoint for fallback (Google Translate)
+export const FALLBACK_API_URL = process.env.FALLBACK_API_URL ||
+  'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&dt=t';
