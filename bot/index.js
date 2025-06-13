@@ -47,8 +47,7 @@ for (const k of [
   'UPSTASH_REDIS_REST_URL',
   'UPSTASH_REDIS_REST_TOKEN',
   'SUPPORT_SERVER_URL',
-  'NEWS_SOURCE',
-  'FALLBACK_API_URL'
+  'NEWS_SOURCE'
 ]) {
   if (!process.env[k]) {
     console.error(`❌ Missing env: ${k}`);
