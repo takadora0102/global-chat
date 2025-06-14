@@ -294,9 +294,9 @@ async function handleSetup(interaction) {
       return interaction.editReply('❌ Need Administrator permission.');
     }
 
-    /* (2) “Global-Chat Settings” カテゴリ */
+    /* (2) “Global Chat” カテゴリ */
     const category = await interaction.guild.channels.create({
-      name: 'Global-Chat Settings',
+      name: 'Global Chat',
       type: ChannelType.GuildCategory
     });
 
@@ -386,16 +386,15 @@ async function handleSetup(interaction) {
       new ButtonBuilder().setURL(process.env.SUPPORT_SERVER_URL).setLabel('Support').setStyle(ButtonStyle.Link)
     );
 
-    /* E) send settings UI to the admin (ephemeral) */
-    await interaction.followUp({
+    /* E) settings チャンネルへ送信 */
+    await settings.send({
       content:
         '**Global Chat Settings**\n\n' +
         '1️⃣ Default Language (select region → bot asks language)\n' +
         '2️⃣ Timezone\n' +
         '3️⃣ Auto-Translate ON / OFF\n' +
         '4️⃣ Detect Timezone (based on your Discord locale)\n',
-      components: [rowRegion, rowTZ, rowAuto, rowMisc],
-      ephemeral: true
+      components: [rowRegion, rowTZ, rowAuto, rowMisc]
     });
 
     // Gemini translation setup
