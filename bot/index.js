@@ -27,6 +27,7 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import { randomUUID } from 'crypto';
 import { Redis } from '@upstash/redis';
+import { GoogleGenAI } from '@google/genai';
 import {
   FLAG_TO_LANG,
   REGIONS,
@@ -78,6 +79,10 @@ async function checkGeminiConnection() {
 }
 checkGeminiConnection();
 
+const genAI = process.env.GEMINI_API_KEY
+  ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+  : null;
+
 /* ────────── 1. Redis & Client 初期化 ────────── */
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
@@ -108,23 +113,26 @@ async function callFreeTranslateAPI(text, lang) {
 
 // Call Gemini translation API (requires GEMINI_API_KEY)
 async function callGeminiTranslateAPI(text, lang) {
-  const endpoint =
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-  const payload = {
-    contents: [{
-      role: 'user',
-      parts: [{ text: `Translate the following text to ${lang}:\n\n${text}` }]
-    }]
-  };
-  const r = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-  if (!r.ok) throw new Error(`gemini api fail: ${r.status}`);
-  const j = await r.json();
-  const parts = j.candidates?.[0]?.content?.parts || [];
-  return parts.map(p => p.text).join('');
+  if (!genAI) throw new Error('gemini not configured');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await genAI.models.generateContent({
+      model: 'gemini-pro',
+      contents: [{ text: `Translate the following text to ${lang}:\n\n${text}` }],
+      abortSignal: controller.signal
+    });
+    clearTimeout(timer);
+    return res.text || '';
+  } catch (e) {
+    clearTimeout(timer);
+    if (e?.status && e.status >= 400) {
+      const err = new Error(`gemini api fail: ${e.status}`);
+      err.status = e.status;
+      throw err;
+    }
+    throw e;
+  }
 }
 
 async function checkGeminiRate(guildId) {
@@ -167,6 +175,7 @@ async function translate(text, lang, guildId) {
       const t = await callGeminiTranslateAPI(text, lang);
       return { text: t, source: 'gemini' };
     } catch (e) {
+      if (e?.status && e.status >= 400) throw e;
       console.error('gemini api error, falling back:', e);
     }
   }
@@ -664,6 +673,9 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     });
   } catch (e) {
     console.error('translate error:', e);
+    if (e?.status && e.status >= 400) {
+      await msg.reply('翻訳失敗しました').catch(() => {});
+    }
   }
 });
 
