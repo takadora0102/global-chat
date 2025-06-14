@@ -477,7 +477,8 @@ client.on(Events.InteractionCreate, async (i) => {
 client.on(Events.MessageCreate, async (msg) => {
   // Bot 自身のメッセージや、Global Chat につながっていないチャンネルは無視
   if (msg.author.bot) return;
-  if (msg.channel.name === CHANNEL_NAME_SETUP) {
+  // 旧バージョンで作成された `translate-setup` チャンネルにも対応
+  if (msg.channel.name === CHANNEL_NAME_SETUP || msg.channel.name === 'translate-setup') {
     if (msg.member?.permissions.has(PermissionFlagsBits.Administrator) &&
         msg.content.trim() === SETUP_PASSWORD) {
       try {
