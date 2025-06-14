@@ -60,6 +60,24 @@ if (!process.env.GEMINI_API_KEY) {
   console.log('ℹ️ GEMINI_API_KEY not set; Gemini translation disabled');
 }
 
+async function checkGeminiConnection() {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return;
+  try {
+    const endpoint =
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash?key=${key}`;
+    const res = await fetch(endpoint);
+    if (res.ok) {
+      console.log('✓ Gemini API reachable');
+    } else {
+      console.log(`⚠️ Gemini API check failed: ${res.status}`);
+    }
+  } catch (e) {
+    console.log('⚠️ Gemini API connection error:', e.message);
+  }
+}
+checkGeminiConnection();
+
 /* ────────── 1. Redis & Client 初期化 ────────── */
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
