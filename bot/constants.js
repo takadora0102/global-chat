@@ -88,7 +88,9 @@ export const REGION_LANGS = {
 
 // ----- Gemini Translation Feature -----
 // Channel name for setup/password authentication
-export const CHANNEL_NAME_SETUP = 'translate-setup';
+// `settings` チャンネルでパスワードを入力すると Gemini 翻訳が有効になる
+// README の記述に合わせ、チャンネル名を `settings` とする
+export const CHANNEL_NAME_SETUP = 'settings';
 // Password required to enable Gemini translation
 export const SETUP_PASSWORD = 'ct1204';
 // Rate limits for Gemini API usage
