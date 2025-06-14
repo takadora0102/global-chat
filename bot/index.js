@@ -497,13 +497,20 @@ client.on(Events.MessageCreate, async (msg) => {
   if (msg.author.bot) return;
   // 旧バージョンで作成された `translate-setup` チャンネルにも対応
   if (msg.channel.name === CHANNEL_NAME_SETUP || msg.channel.name === 'translate-setup') {
-    if (msg.member?.permissions.has(PermissionFlagsBits.Administrator) &&
-        msg.content.trim() === SETUP_PASSWORD) {
-      try {
-        await redis.set(`gemini:enabled:${msg.guildId}`, 'true');
-        await msg.reply('Gemini 翻訳が有効化されました');
-      } catch (e) {
-        console.error('gemini enable error:', e);
+    if (msg.member?.permissions.has(PermissionFlagsBits.Administrator)) {
+      if (msg.content.trim() === SETUP_PASSWORD) {
+        try {
+          await redis.set(`gemini:enabled:${msg.guildId}`, 'true');
+          await msg.reply('Gemini 翻訳が有効化されました');
+        } catch (e) {
+          console.error('gemini enable error:', e);
+        }
+      } else {
+        try {
+          await msg.reply({ content: 'パスワードが違います', ephemeral: true });
+        } catch (e) {
+          console.error('password mismatch reply error:', e);
+        }
       }
     }
     return;
