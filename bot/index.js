@@ -60,6 +60,11 @@ if (!process.env.GEMINI_API_KEY) {
   console.log('ℹ️ GEMINI_API_KEY not set; Gemini translation disabled');
 }
 
+/**
+ * Verify connectivity to the Gemini API and log the result.
+ * Does nothing if the API key is missing.
+ * @returns {Promise<void>}
+ */
 async function checkGeminiConnection() {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return;
@@ -98,6 +103,12 @@ const kMsg = (u) => `msg_cnt:${u}`;
 const kLike = (u) => `like_cnt:${u}`;
 
 // ---- Translation Utilities ----
+/**
+ * Use the public Google Translate API to translate text.
+ * @param {string} text - Text to translate.
+ * @param {string} lang - Target language code.
+ * @returns {Promise<string>} Translated text.
+ */
 async function callFreeTranslateAPI(text, lang) {
   const url = `${FALLBACK_API_URL}&tl=${lang}&q=${encodeURIComponent(text)}`;
   const r = await fetch(url);
@@ -106,7 +117,12 @@ async function callFreeTranslateAPI(text, lang) {
   return j[0].map((v) => v[0]).join('');
 }
 
-// Call Gemini translation API (requires GEMINI_API_KEY)
+/**
+ * Translate text using the Gemini API when enabled.
+ * @param {string} text - Text to translate.
+ * @param {string} lang - Target language code.
+ * @returns {Promise<string>} Translated text.
+ */
 async function callGeminiTranslateAPI(text, lang) {
   const endpoint =
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
@@ -127,6 +143,11 @@ async function callGeminiTranslateAPI(text, lang) {
   return parts.map(p => p.text).join('');
 }
 
+/**
+ * Rate limit checker for Gemini API usage.
+ * @param {string} guildId - Guild identifier.
+ * @returns {Promise<boolean>} Whether requests are within limits.
+ */
 async function checkGeminiRate(guildId) {
   try {
     const rpmKey = `gemini:rpm:${guildId}`;
@@ -145,6 +166,13 @@ async function checkGeminiRate(guildId) {
   }
 }
 
+/**
+ * Translate text using Gemini when available or fall back to Google.
+ * @param {string} text - Source text.
+ * @param {string} lang - Target language code.
+ * @param {string} guildId - Guild making the request.
+ * @returns {Promise<{text: string, source: string}>}
+ */
 async function translate(text, lang, guildId) {
   if (!process.env.GEMINI_API_KEY) {
     const t = await callFreeTranslateAPI(text, lang);
@@ -175,6 +203,11 @@ async function translate(text, lang, guildId) {
 }
 
 /* Relay Embed ビルダー */
+/**
+ * Build the embed used when relaying messages between servers.
+ * @param {{userTag: string, originGuild: string, tz: number, userAvatar: string, content: string, userId: string, auto: boolean, source: string, reply?: string}} opts
+ * @returns {import('discord.js').EmbedBuilder}
+ */
 function buildRelayEmbed({ userTag, originGuild, tz, userAvatar, content, userId, auto, source, reply }) {
   const sign = tz >= 0 ? '+' + tz : tz;
   const eb = new EmbedBuilder()
@@ -188,6 +221,11 @@ function buildRelayEmbed({ userTag, originGuild, tz, userAvatar, content, userId
 }
 
 /* Duplicate ガード */
+/**
+ * Prevent duplicate relays by caching message keys.
+ * @param {string} globalKey - Unique key for the relay target.
+ * @returns {Promise<boolean>} Whether the message was already sent.
+ */
 async function alreadySent(globalKey) {
   const key = `dup:${globalKey}`;
   if (await redis.get(key)) return true;
@@ -225,6 +263,12 @@ const LOCALE_TZ_MAP = {
 };
 
 /* ────────── 3. /setup コマンド ────────── */
+/**
+ * Handle the `/setup` slash command.
+ * Creates the required channels and registers the server to the hub.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * @returns {Promise<void>}
+ */
 async function handleSetup(interaction) {
   try {
     /* (1) 権限チェック & defer */
@@ -351,6 +395,11 @@ async function handleSetup(interaction) {
 
 
 /* ────────── 4. /profile コマンド ────────── */
+/**
+ * Show the calling user's message and like counts.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * @returns {Promise<void>}
+ */
 async function handleProfile(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const m = (await redis.get(kMsg(interaction.user.id))) || '0';
@@ -359,6 +408,11 @@ async function handleProfile(interaction) {
 }
 
 /* ────────── 5. /ranking コマンド ────────── */
+/**
+ * Display top 10 rankings by messages or likes.
+ * @param {import('discord.js').ChatInputCommandInteraction} interaction
+ * @returns {Promise<void>}
+ */
 async function handleRanking(interaction) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const sub = interaction.options.getSubcommand();
