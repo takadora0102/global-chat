@@ -325,15 +325,16 @@ async function handleSetup(interaction) {
       new ButtonBuilder().setURL(process.env.SUPPORT_SERVER_URL).setLabel('Support').setStyle(ButtonStyle.Link)
     );
 
-    /* E) settings チャンネルへ送信 */
-    await settings.send({
+    /* E) send settings UI to the admin (ephemeral) */
+    await interaction.followUp({
       content:
         '**Global Chat Settings**\n\n' +
         '1️⃣ Default Language (select region → bot asks language)\n' +
         '2️⃣ Timezone\n' +
         '3️⃣ Auto-Translate ON / OFF\n' +
         '4️⃣ Detect Timezone (based on your Discord locale)\n',
-      components: [rowRegion, rowTZ, rowAuto, rowMisc]
+      components: [rowRegion, rowTZ, rowAuto, rowMisc],
+      ephemeral: true
     });
 
     // Gemini translation setup
