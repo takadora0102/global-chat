@@ -614,7 +614,14 @@ client.on(Events.MessageCreate, async (msg) => {
   /* 3) メタ情報（タイムゾーン・言語・自動翻訳設定）を取得 */
   const tz   = (await redis.hget(`tz:${msg.guildId}`, 'tz')) ?? '0';
   const lang = (await redis.hget(`lang:${msg.guildId}`, 'lang')) ?? 'en';
-  const auto = (await redis.hget(`lang:${msg.guildId}`, 'auto')) === 'true';
+  let auto = (await redis.hget(`lang:${msg.guildId}`, 'auto')) === 'true';
+
+  if (msg.content && msg.content.length > 2000) {
+    auto = false;
+    try {
+      await msg.reply('⚠️ 2000文字を超えるため翻訳をスキップしました');
+    } catch (e) { console.error('notify skip failed:', e); }
+  }
 
   /* 4) ペイロードを作成 */
   const payload = {
