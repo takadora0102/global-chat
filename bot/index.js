@@ -621,6 +621,7 @@ client.on(Events.MessageCreate, async (msg) => {
 /* ────────── 9. MessageReactionAdd (👍 & 国旗翻訳) ────────── */
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   if (user.bot) return;
+  if (user.id === client.user.id) return;
 
   // partial（キャッシュ外状態）の場合は fetch して完全なオブジェクトを取得
   if (reaction.partial) {
