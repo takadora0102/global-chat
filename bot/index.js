@@ -534,7 +534,9 @@ client.on(Events.InteractionCreate, async (i) => {
   if (i.isStringSelectMenu() && i.customId === 'setting_lang') {
     const chosenLang = i.values[0];
     await redis.hset(`lang:${i.guildId}`, { lang: chosenLang, auto: 'true' });
-    return i.reply({ content: `✅ Default Language set to **${chosenLang}** (Auto ON).`, flags: MessageFlags.Ephemeral });
+    await i.deferUpdate();
+    await i.channel.send(`✅ Default Language set to **${chosenLang}** (Auto ON).`);
+    return;
   }
 
   // --- settings: Timezone / Auto / Detect / Support ---
@@ -542,12 +544,16 @@ client.on(Events.InteractionCreate, async (i) => {
     const tzValue = i.values[0];
     await redis.hset(`tz:${i.guildId}`, { tz: tzValue });
     const sign = tzValue >= 0 ? '+' : '';
-    return i.reply({ content: `✅ Timezone set to UTC${sign}${tzValue}`, flags: MessageFlags.Ephemeral });
+    await i.deferUpdate();
+    await i.channel.send(`✅ Timezone set to UTC${sign}${tzValue}`);
+    return;
   }
   if (i.isButton() && ['autotrans_on', 'autotrans_off'].includes(i.customId)) {
     const val = i.customId === 'autotrans_on' ? 'true' : 'false';
     await redis.hset(`lang:${i.guildId}`, { auto: val });
-    return i.reply({ content: `🔄 Auto-Translate is now **${val === 'true' ? 'ON' : 'OFF'}**.`, flags: MessageFlags.Ephemeral });
+    await i.deferUpdate();
+    await i.channel.send(`🔄 Auto-Translate is now **${val === 'true' ? 'ON' : 'OFF'}**.`);
+    return;
   }
   if (i.isButton() && i.customId === 'detect_timezone') {
     const loc = i.locale ?? i.user?.locale;
@@ -558,7 +564,9 @@ client.on(Events.InteractionCreate, async (i) => {
     if (tz === undefined) tz = 0;
     await redis.hset(`tz:${i.guildId}`, { tz: String(tz) });
     const sign = tz >= 0 ? '+' : '';
-    return i.reply({ content: `🌐 Detected Timezone set to UTC${sign}${tz}.`, flags: MessageFlags.Ephemeral });
+    await i.deferUpdate();
+    await i.channel.send(`🌐 Detected Timezone set to UTC${sign}${tz}.`);
+    return;
   }
 });
 
