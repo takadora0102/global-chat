@@ -8,11 +8,11 @@
     "test": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@upstash/redis": "^1.x.x",
     "discord.js": "^14.x.x",
     "dotenv": "^16.x.x",
-    "express": "^4.x.x",
-    "@google/genai": "^1.5.1"
+    "express": "^4.x.x"
   },
   "devDependencies": {
     "jest": "^29.7.0"
