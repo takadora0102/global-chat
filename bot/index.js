@@ -33,13 +33,15 @@ import {
   REGIONS,
   REGION_LANGS,
   CHANNEL_NAME_SETUP,
-  SETUP_PASSWORD,
-  RATE_LIMIT_RPM,
-  RATE_LIMIT_RPD,
   FALLBACK_API_URL
 } from './constants.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// ----- Embed Colors -----
+const COLOR_PRO    = 0x9b59b6;  // 紫 (Gemini-Pro)
+const COLOR_FLASH  = 0x3498db;  // 青 (Gemini-Flash)
+const COLOR_GOOGLE = 0x7f8c8d;  // 灰 (Google)
 
 /* ────────── 0. 環境変数チェック ────────── */
 for (const k of [
@@ -82,6 +84,7 @@ async function checkGeminiConnection() {
     console.log('⚠️ Gemini API connection error:', e.message);
   }
 }
+
 checkGeminiConnection();
 
 const genAI = process.env.GEMINI_API_KEY
@@ -102,6 +105,19 @@ const client = new Client({
   ],
   partials: ['MESSAGE', 'CHANNEL', 'REACTION']
 });
+
+async function migrateTranslatorFlags() {
+  try {
+    const keys = await redis.keys('translator:*');
+    for (const k of keys) {
+      const v = await redis.get(k);
+      if (v === 'true') await redis.set(k, 'flash');
+    }
+  } catch (e) {
+    console.error('flag migration error:', e);
+  }
+}
+migrateTranslatorFlags();
 
 /* ────────── 2. ヘルパー関数 ────────── */
 const kMsg = (u) => `msg_cnt:${u}`;
@@ -128,18 +144,23 @@ async function callFreeTranslateAPI(text, lang) {
  * @param {string} lang - Target language code.
  * @returns {Promise<string>} Translated text.
  */
-async function callGeminiTranslateAPI(text, lang) {
+async function callGeminiTranslateAPI(text, lang, model) {
   if (!genAI) throw new Error('gemini not configured');
+  const mdlName = model === 'pro' ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
+  const mdl = genAI.getGenerativeModel({ model: mdlName });
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const res = await genAI.models.generateContent({
-      model: 'gemini-pro',
-      contents: [{ text: `Translate the following text to ${lang}:\n\n${text}` }],
-      abortSignal: controller.signal
-    });
+    const prompt =
+      `Translate the following text into ${lang}. ` +
+      `Return only the translated text.\n\n${text}`;
+    const result = await mdl.generateContent(
+      [{ role: 'user', parts: [{ text: prompt }] }],
+      { abortSignal: controller.signal }
+    );
     clearTimeout(timer);
-    return res.text || '';
+    return (await result.response.text()).trim();
   } catch (e) {
     clearTimeout(timer);
     if (e?.status && e.status >= 400) {
@@ -156,18 +177,20 @@ async function callGeminiTranslateAPI(text, lang) {
  * @param {string} guildId - Guild identifier.
  * @returns {Promise<boolean>} Whether requests are within limits.
  */
-async function checkGeminiRate(guildId) {
+async function checkGeminiRate(guildId, model) {
   try {
-    const rpmKey = `gemini:rpm:${guildId}`;
+    const rpmKey = `gemini:rpm:${model}:${guildId}`;
     const rpmCount = await redis.incr(rpmKey);
     if (rpmCount === 1) await redis.expire(rpmKey, 60);
 
     const today = new Date().toISOString().slice(0, 10);
-    const rpdKey = `gemini:rpd:${guildId}:${today}`;
+    const rpdKey = `gemini:rpd:${model}:${guildId}:${today}`;
     const rpdCount = await redis.incr(rpdKey);
     if (rpdCount === 1) await redis.expire(rpdKey, 86400);
 
-    return rpmCount <= RATE_LIMIT_RPM && rpdCount <= RATE_LIMIT_RPD;
+    const limitRpm = model === 'pro' ? 2 : 15;
+    const limitRpd = model === 'pro' ? 50 : 1500;
+    return rpmCount <= limitRpm && rpdCount <= limitRpd;
   } catch (e) {
     console.error('rate limit check error:', e);
     return false;
@@ -187,34 +210,29 @@ async function translate(text, lang, guildId) {
     return { text: t, source: 'google' };
   }
 
-  let useGemini = false;
-  try {
-    let flag = await redis.get(`translator:${guildId}`);
-    if (flag === null) {
-      const old = await redis.get(`gemini:enabled:${guildId}`);
-      if (old !== null) {
-        flag = old;
-        await redis.set(`translator:${guildId}`, old);
-        await redis.del(`gemini:enabled:${guildId}`);
-      }
-    }
-    if (flag === 'true') {
-      const within = await checkGeminiRate(guildId);
-      if (within) useGemini = true;
-    }
-  } catch (e) {
-    console.error('gemini check error:', e);
+  let pref = await redis.get(`translator:${guildId}`);
+  if (pref === 'true') pref = 'flash';
+
+  const tryGemini = async (model) => {
+    const within = await checkGeminiRate(guildId, model);
+    if (!within) throw { status: 429 };
+    return await callGeminiTranslateAPI(text, lang, model);
+  };
+
+  if (pref === 'pro') {
+    try {
+      const t = await tryGemini('pro');
+      return { text: t, source: 'pro' };
+    } catch (e) { if (e.status !== 429 && e.status !== 402) throw e; }
   }
 
-  if (useGemini) {
+  if (pref === 'flash' || pref === 'pro') {
     try {
-      const t = await callGeminiTranslateAPI(text, lang);
-      return { text: t, source: 'gemini' };
-    } catch (e) {
-      if (e?.status && e.status >= 400) throw e;
-      console.error('gemini api error, falling back:', e);
-    }
+      const t = await tryGemini('flash');
+      return { text: t, source: 'flash' };
+    } catch (e) { if (e.status !== 429 && e.status !== 402) throw e; }
   }
+
   const fb = await callFreeTranslateAPI(text, lang);
   return { text: fb, source: 'google' };
 }
@@ -229,7 +247,20 @@ function buildRelayEmbed({ userTag, originGuild, tz, userAvatar, content, userId
   const sign = tz >= 0 ? '+' + tz : tz;
   const eb = new EmbedBuilder()
     .setAuthor({ name: `${userTag} [${originGuild} UTC${sign}]`, iconURL: userAvatar })
-    .setFooter({ text: `UID:${userId} 🌐 global chat${auto ? ` • auto-translated [${source === 'gemini' ? 'G' : 'D'}]` : ''}` })
+    .setColor(
+      source === 'pro'   ? COLOR_PRO
+    : source === 'flash' ? COLOR_FLASH
+    :                      COLOR_GOOGLE
+    )
+    .setFooter({
+      text: `UID:${userId} 🌐 global chat${auto
+        ? ` • auto-translated [${
+            source === 'pro'   ? 'G-P'
+          : source === 'flash' ? 'G-F'
+          :                      'G-D'
+          }]`
+        : ''}`
+    })
     .setTimestamp(Date.now());
 
   if (reply) eb.addFields({ name: '↪️ Reply to', value: reply.slice(0, 256) });
@@ -576,12 +607,17 @@ client.on(Events.MessageCreate, async (msg) => {
   if (msg.author.bot) return;
   // 旧バージョンで作成された `translate-setup` チャンネルにも対応
   if (msg.channel.name === CHANNEL_NAME_SETUP || msg.channel.name === 'translate-setup') {
-    if (msg.member?.permissions.has(PermissionFlagsBits.Administrator) &&
-        msg.content.trim() === SETUP_PASSWORD) {
+    if (msg.member?.permissions.has(PermissionFlagsBits.Administrator)) {
+      const content = msg.content.trim();
       try {
-        await redis.set(`translator:${msg.guildId}`, 'true');
+        if (content === 'ct1204') {
+          await redis.set(`translator:${msg.guildId}`, 'flash');
+          await msg.reply('Gemini Flash 翻訳が有効化されました');
+        } else if (content === 'ct0102') {
+          await redis.set(`translator:${msg.guildId}`, 'pro');
+          await msg.reply('Gemini Pro 翻訳が有効化されました');
+        }
         await redis.del(`gemini:enabled:${msg.guildId}`);
-        await msg.reply('Gemini 翻訳が有効化されました');
       } catch (e) {
         console.error('gemini enable error:', e);
       }
@@ -747,7 +783,16 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
       embeds: [
         new EmbedBuilder()
           .setDescription(`> ${original}\n\n**${translated}**`)
-          .setFooter({ text: `🌐 translated to ${langCode} [${source === 'gemini' ? 'G' : 'D'}]` })
+          .setColor(
+            source === 'pro'   ? COLOR_PRO
+          : source === 'flash' ? COLOR_FLASH
+          :                      COLOR_GOOGLE
+          )
+          .setFooter({ text: `🌐 translated to ${langCode} [${
+            source === 'pro'   ? 'G-P'
+          : source === 'flash' ? 'G-F'
+          :                      'G-D'
+          }]` })
       ]
     });
   } catch (e) {
