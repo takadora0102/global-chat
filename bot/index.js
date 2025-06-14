@@ -153,7 +153,15 @@ async function translate(text, lang, guildId) {
 
   let useGemini = false;
   try {
-    const flag = await redis.get(`gemini:enabled:${guildId}`);
+    let flag = await redis.get(`translator:${guildId}`);
+    if (flag === null) {
+      const old = await redis.get(`gemini:enabled:${guildId}`);
+      if (old !== null) {
+        flag = old;
+        await redis.set(`translator:${guildId}`, old);
+        await redis.del(`gemini:enabled:${guildId}`);
+      }
+    }
     if (flag === 'true') {
       const within = await checkGeminiRate(guildId);
       if (within) useGemini = true;
@@ -500,7 +508,8 @@ client.on(Events.MessageCreate, async (msg) => {
     if (msg.member?.permissions.has(PermissionFlagsBits.Administrator) &&
         msg.content.trim() === SETUP_PASSWORD) {
       try {
-        await redis.set(`gemini:enabled:${msg.guildId}`, 'true');
+        await redis.set(`translator:${msg.guildId}`, 'true');
+        await redis.del(`gemini:enabled:${msg.guildId}`);
         await msg.reply('Gemini 翻訳が有効化されました');
       } catch (e) {
         console.error('gemini enable error:', e);
