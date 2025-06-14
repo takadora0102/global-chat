@@ -1,8 +1,10 @@
 // constants.js – Language and Flag Mappings for Global Chat Bot
 
 /**
- * サーバー言語選択メニューに表示する言語一覧
- * emoji: 国旗絵文字, value: サーバー設定用言語コード
+ * List of language choices for the server setup menu.
+ * Each item contains the display label, the language code
+ * used for configuration and the corresponding flag emoji.
+ * @type {{label: string, value: string, emoji: string}[]}
  */
 export const LANG_CHOICES = [
   { label: '日本語',           value: 'ja',     emoji: '🇯🇵' },
@@ -34,7 +36,8 @@ export const LANG_CHOICES = [
 ];
 
 /**
- * 国旗リアクション → 翻訳言語コードのマッピング
+ * Mapping from flag emoji to translation language code.
+ * @type {Record<string, string>}
  */
 export const FLAG_TO_LANG = {
   '🇯🇵': 'ja',
@@ -66,7 +69,8 @@ export const FLAG_TO_LANG = {
 };
 
 /**
- * 地域 → 言語コード一覧のマッピング
+ * Region selection list used in the help and setup flows.
+ * @type {{label: string, value: string, emoji: string}[]}
  */
 export const REGIONS = [
   { label: 'Asia',                   value: 'asia',          emoji: '🌏' },
@@ -77,6 +81,10 @@ export const REGIONS = [
   { label: 'Oceania',                value: 'oceania',       emoji: '🌏' }
 ];
 
+/**
+ * Mapping from region identifier to supported language codes.
+ * @type {Record<string, string[]>}
+ */
 export const REGION_LANGS = {
   asia:         ['en','ja','zh','zh-TW','ko','vi'],
   europe:       ['en','es','fr','de','ru','uk','el'],
@@ -87,15 +95,18 @@ export const REGION_LANGS = {
 };
 
 // ----- Gemini Translation Feature -----
-// Channel name for setup/password authentication
-// `settings` チャンネルでパスワードを入力すると Gemini 翻訳が有効になる
-// README の記述に合わせ、チャンネル名を `settings` とする
+/** Channel name used for Gemini translation setup. */
 export const CHANNEL_NAME_SETUP = 'settings';
-// Password required to enable Gemini translation
+
+/** Password required to enable Gemini translation. */
 export const SETUP_PASSWORD = 'ct1204';
-// Rate limits for Gemini API usage
-export const RATE_LIMIT_RPM = 15;   // requests per minute
-export const RATE_LIMIT_RPD = 1500; // requests per day
-// Public translation endpoint for fallback (Google Translate)
+
+/** Requests per minute limit for Gemini API usage. */
+export const RATE_LIMIT_RPM = 15;
+
+/** Requests per day limit for Gemini API usage. */
+export const RATE_LIMIT_RPD = 1500;
+
+/** Fallback translation API endpoint (Google Translate). */
 export const FALLBACK_API_URL = process.env.FALLBACK_API_URL ||
   'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&dt=t';
