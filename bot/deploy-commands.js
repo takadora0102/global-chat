@@ -17,11 +17,13 @@ import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import 'dotenv/config';
+import pino from 'pino';
+const logger = pino();
 
 // ----- Environment Variables Check -----
 for (const k of ['DISCORD_TOKEN', 'CLIENT_ID']) {
   if (!process.env[k]) {
-    console.error(`❌ Missing env: ${k}`);
+    logger.error(`❌ Missing env: ${k}`);
     process.exit(1);
   }
 }
@@ -41,12 +43,12 @@ for (const file of readdirSync(commandsPath)) {
     const { default: cmd } = await import(fileUrl);
     if (cmd?.data?.toJSON) {
       commands.push(cmd.data.toJSON());
-      console.log(`✔︎ Loaded slash command: ${cmd.data.name}`);
+      logger.info(`✔︎ Loaded slash command: ${cmd.data.name}`);
     } else {
       console.warn(`⚠︎ Skip non-command file: ${file}`);
     }
   } catch (err) {
-    console.error(`❌ Failed to import ${file}:`, err);
+    logger.error(`❌ Failed to import ${file}:`, err);
   }
 }
 
@@ -54,14 +56,14 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
 (async () => {
   try {
-    console.log(`🚀 Deploying ${commands.length} global slash commands…`);
+    logger.info(`🚀 Deploying ${commands.length} global slash commands…`);
     await rest.put(
       Routes.applicationCommands(process.env.CLIENT_ID),
       { body: commands }
     );
-    console.log('✅ Commands deployed successfully.');
+    logger.info('✅ Commands deployed successfully.');
   } catch (err) {
-    console.error('❌ Deployment failed:', err);
+    logger.error('❌ Deployment failed:', err);
     process.exit(1);
   }
 })();

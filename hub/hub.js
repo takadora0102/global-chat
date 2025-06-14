@@ -5,6 +5,8 @@
 import express from 'express';
 import fetch from 'node-fetch';
 import { Redis } from '@upstash/redis';
+import pino from 'pino';
+const logger = pino();
 
 // ----- Environment Variables Check -----
 for (const k of [
@@ -13,7 +15,7 @@ for (const k of [
   'BOT_ENDPOINT'
 ]) {
   if (!process.env[k]) {
-    console.error(`❌ Missing env: ${k}`);
+    logger.error(`❌ Missing env: ${k}`);
     process.exit(1);
   }
 }
@@ -30,18 +32,18 @@ const redis = new Redis({
 app.post('/global/join', async (req, res) => {
   const key = JSON.stringify(req.body);
   if (await redis.sismember('global:channels', key)) {
-    console.log('🔄 already joined', req.body);
+    logger.info('🔄 already joined', req.body);
     return res.send({ status: 'already' });
   }
   await redis.sadd('global:channels', key);
-  console.log('🟢 joined', req.body);
+  logger.info('🟢 joined', req.body);
   res.send({ status: 'joined' });
 });
 
 app.post('/global/leave', async (req, res) => {
   const key = JSON.stringify(req.body);
   await redis.srem('global:channels', key);
-  console.log('🔴 left', req.body);
+  logger.info('🔴 left', req.body);
   res.send({ status: 'left' });
 });
 
@@ -50,7 +52,7 @@ app.post('/publish', async (req, res) => {
   const msg = req.body;
   // mention guard
   if (/(?:@everyone|@here|<@!?\\d+>)/.test(msg.content)) {
-    console.log('🔒 mention blocked');
+    logger.info('🔒 mention blocked');
     return res.send({ status: 'blocked' });
   }
 
@@ -62,14 +64,14 @@ app.post('/publish', async (req, res) => {
       try {
         parsed = JSON.parse(entry);
       } catch {
-        console.warn('⚠️ corrupted entry removed', entry);
+        logger.warn('⚠️ corrupted entry removed', entry);
         await redis.srem('global:channels', entry);
         continue;
       }
     } else if (typeof entry === 'object' && entry.guildId && entry.channelId) {
       parsed = entry;
     } else {
-      console.warn('⚠️ invalid entry removed', entry);
+      logger.warn('⚠️ invalid entry removed', entry);
       await redis.srem('global:channels', entry);
       continue;
     }
@@ -84,7 +86,7 @@ app.post('/publish', async (req, res) => {
     const targetLang      = shouldTranslate ? lang : null;
 
     // ログ：Relay 宛先と targetLang
-    console.log('🔄 sending to relay →', guildId, channelId, 'targetLang:', targetLang);
+    logger.info('🔄 sending to relay →', guildId, channelId, 'targetLang:', targetLang);
 
     try {
       const r = await fetch(`${process.env.BOT_ENDPOINT}/relay`, {
@@ -94,12 +96,12 @@ app.post('/publish', async (req, res) => {
       });
 
       // ログ：Relay レスポンス
-      console.log('➡️ relay response', guildId, channelId, r.status);
+      logger.info('➡️ relay response', guildId, channelId, r.status);
 
       const js = await r.json().catch(() => ({}));
-      console.log(`➡️ ${guildId}/${channelId}`, r.status, js.messageId ?? '');
+      logger.info(`➡️ ${guildId}/${channelId}`, r.status, js.messageId ?? '');
     } catch (err) {
-      console.error('relay err →', guildId, channelId, err.message);
+      logger.error('relay err →', guildId, channelId, err.message);
     }
   }
 
@@ -108,4 +110,4 @@ app.post('/publish', async (req, res) => {
 
 /* ---------- Health ---------- */
 app.get('/healthz', (_q, r) => r.send('OK'));
-app.listen(process.env.PORT || 3000, () => console.log('Hub listening'));
+app.listen(process.env.PORT || 3000, () => logger.info('Hub listening'));

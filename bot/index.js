@@ -9,6 +9,8 @@
  */
 
 import 'dotenv/config';
+import pino from 'pino';
+const logger = pino();
 import {
   Client,
   IntentsBitField,
@@ -50,14 +52,14 @@ for (const k of [
   'NEWS_SOURCE'
 ]) {
   if (!process.env[k]) {
-    console.error(`❌ Missing env: ${k}`);
+    logger.error(`❌ Missing env: ${k}`);
     process.exit(1);
   }
 }
 const NEWS_SOURCE = process.env.NEWS_SOURCE;
 
 if (!process.env.GEMINI_API_KEY) {
-  console.log('ℹ️ GEMINI_API_KEY not set; Gemini translation disabled');
+  logger.info('ℹ️ GEMINI_API_KEY not set; Gemini translation disabled');
 }
 
 async function checkGeminiConnection() {
@@ -68,12 +70,12 @@ async function checkGeminiConnection() {
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash?key=${key}`;
     const res = await fetch(endpoint);
     if (res.ok) {
-      console.log('✓ Gemini API reachable');
+      logger.info('✓ Gemini API reachable');
     } else {
-      console.log(`⚠️ Gemini API check failed: ${res.status}`);
+      logger.info(`⚠️ Gemini API check failed: ${res.status}`);
     }
   } catch (e) {
-    console.log('⚠️ Gemini API connection error:', e.message);
+    logger.info('⚠️ Gemini API connection error:', e.message);
   }
 }
 checkGeminiConnection();
@@ -140,7 +142,7 @@ async function checkGeminiRate(guildId) {
 
     return rpmCount <= RATE_LIMIT_RPM && rpdCount <= RATE_LIMIT_RPD;
   } catch (e) {
-    console.error('rate limit check error:', e);
+    logger.error('rate limit check error:', e);
     return false;
   }
 }
@@ -159,7 +161,7 @@ async function translate(text, lang, guildId) {
       if (within) useGemini = true;
     }
   } catch (e) {
-    console.error('gemini check error:', e);
+    logger.error('gemini check error:', e);
   }
 
   if (useGemini) {
@@ -167,7 +169,7 @@ async function translate(text, lang, guildId) {
       const t = await callGeminiTranslateAPI(text, lang);
       return { text: t, source: 'gemini' };
     } catch (e) {
-      console.error('gemini api error, falling back:', e);
+      logger.error('gemini api error, falling back:', e);
     }
   }
   const fb = await callFreeTranslateAPI(text, lang);
@@ -258,9 +260,9 @@ async function handleSetup(interaction) {
       const src = await client.channels.fetch(NEWS_SOURCE);
       if (src?.type === ChannelType.GuildAnnouncement && src.addFollower) {
         await src.addFollower(botAnnouncements.id, 'auto-follow');
-        console.log('✓ followed support announcement');
+        logger.info('✓ followed support announcement');
       }
-    } catch (e) { console.error('follow failed:', e); }
+    } catch (e) { logger.error('follow failed:', e); }
 
     /* (4) global-chat 本体 */
     const globalChat = await interaction.guild.channels.create({
@@ -342,7 +344,7 @@ async function handleSetup(interaction) {
     /* 完了 */
     await interaction.editReply('✅ Setup completed!');
   } catch (e) {
-    console.error('setup error:', e);
+    logger.error('setup error:', e);
     if (interaction.deferred) {
       await interaction.editReply('❌ Setup failed. Check permissions / ENV.');
     }
@@ -503,7 +505,7 @@ client.on(Events.MessageCreate, async (msg) => {
         await redis.set(`gemini:enabled:${msg.guildId}`, 'true');
         await msg.reply('Gemini 翻訳が有効化されました');
       } catch (e) {
-        console.error('gemini enable error:', e);
+        logger.error('gemini enable error:', e);
       }
     }
     return;
@@ -534,7 +536,7 @@ client.on(Events.MessageCreate, async (msg) => {
       }
     } catch (e) {
       // 参照先メッセージが取得できなかった場合は何もしない
-      console.error('Reply fetch error:', e);
+      logger.error('Reply fetch error:', e);
     }
   }
 
@@ -612,7 +614,7 @@ client.on(Events.MessageCreate, async (msg) => {
         });
         await sent.react('👍');
       } catch (e) {
-        console.error(`Fallback relay to ${channelId} failed:`, e);
+        logger.error(`Fallback relay to ${channelId} failed:`, e);
       }
     }
   }
@@ -627,7 +629,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     try {
       await reaction.fetch();
     } catch (err) {
-      console.error('Failed to fetch partial reaction:', err);
+      logger.error('Failed to fetch partial reaction:', err);
       return;
     }
   }
@@ -654,7 +656,10 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
   const original = msg.content || msg.embeds[0]?.description || '';
   if (!original) return;
   try {
+    const srcLangSetting = await redis.hget(`lang:${msg.guildId}`, 'lang');
+    const start = Date.now();
     const { text: translated, source } = await translate(original, langCode, msg.guildId);
+    logger.info({ srcLang: srcLangSetting, destLang: langCode, engine: source, elapsedMs: Date.now() - start });
     await msg.reply({
       embeds: [
         new EmbedBuilder()
@@ -663,7 +668,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
       ]
     });
   } catch (e) {
-    console.error('translate error:', e);
+    logger.error('translate error:', e);
   }
 });
 
@@ -690,7 +695,7 @@ app.post('/relay', async (req, res) => {
         const srcLang  = await redis.hget(`lang:${p.guildId}`, 'lang');
 
         // デバッグ用ログ（Redis から取得できているか確認）
-        console.log(`→ Relay to ${channelId} (guild:${ch.guildId}): destLang=${destLang}, autoOn=${autoOn}, srcLang=${srcLang}`);
+        logger.info(`→ Relay to ${channelId} (guild:${ch.guildId}): destLang=${destLang}, autoOn=${autoOn}, srcLang=${srcLang}`);
 
         let finalContent = p.content;
         let autoFlag = false;
@@ -698,12 +703,14 @@ app.post('/relay', async (req, res) => {
         // 「Auto-Translate ON」で言語設定があり、送信元と異なる場合に翻訳
         if (autoOn && destLang && destLang !== srcLang) {
           try {
+            const start = Date.now();
             const { text: t, source } = await translate(p.content, destLang, ch.guildId);
+            logger.info({ srcLang, destLang, engine: source, elapsedMs: Date.now() - start });
             finalContent = t;
             transSource = source;
             autoFlag = true;
           } catch (e) {
-            console.error('auto-translate error:', e);
+            logger.error('auto-translate error:', e);
             finalContent = p.content;
             transSource = 'google';
           }
@@ -727,21 +734,21 @@ app.post('/relay', async (req, res) => {
         });
         await sent.react('👍');
       } catch (e) {
-        console.error(`relay to ${channelId} failed:`, e);
+        logger.error(`relay to ${channelId} failed:`, e);
       }
     }
     return res.send({ ok: true });
   } catch (e) {
-    console.error('relay error:', e);
+    logger.error('relay error:', e);
     return res.sendStatus(500);
   }
 });
 
 app.get('/healthz', (_, res) => res.send('OK'));
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('🚦 relay on', PORT));
+app.listen(PORT, () => logger.info('🚦 relay on', PORT));
 
 /* ────────── 11. Bot ログイン ────────── */
 client.login(process.env.DISCORD_TOKEN)
-  .then(() => console.log('✅ Logged in & ready'))
-  .catch((e) => console.error('login error', e));
+  .then(() => logger.info('✅ Logged in & ready'))
+  .catch((e) => logger.error('login error', e));
