@@ -146,19 +146,17 @@ async function callFreeTranslateAPI(text, lang) {
  */
 async function callGeminiTranslateAPI(text, lang, model) {
   if (!genAI) throw new Error('gemini not configured');
-  const mdlName = model === 'pro' ? 'gemini-1.5-pro' : 'gemini-1.5-flash';
+  const mdlName = model === 'pro'
+    ? 'gemini-1.5-pro-latest'
+    : 'gemini-1.5-flash-latest';
   const mdl = genAI.getGenerativeModel({ model: mdlName });
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
     const prompt =
-      `Translate the following text into ${lang}. ` +
-      `Return only the translated text.\n\n${text}`;
-    const result = await mdl.generateContent(
-      [{ role: 'user', parts: [{ text: prompt }] }],
-      { abortSignal: controller.signal }
-    );
+      `Translate the following text into ${lang}. Return only the translated text.\n\n${text}`;
+    const result = await mdl.generateContent(prompt, { abortSignal: controller.signal });
     clearTimeout(timer);
     return (await result.response.text()).trim();
   } catch (e) {
@@ -320,7 +318,7 @@ const LOCALE_TZ_MAP = {
 async function handleSetup(interaction) {
   try {
     /* (1) 権限チェック & defer */
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await interaction.deferReply({ ephemeral: true });
     if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
       return interaction.editReply('❌ Need Administrator permission.');
     }
@@ -449,7 +447,7 @@ async function handleSetup(interaction) {
  * @returns {Promise<void>}
  */
 async function handleProfile(interaction) {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  await interaction.deferReply({ ephemeral: true });
   const m = (await redis.get(kMsg(interaction.user.id))) || '0';
   const l = (await redis.get(kLike(interaction.user.id))) || '0';
   await interaction.editReply(`📊 **${interaction.user.tag}**\n• Messages: ${m}\n• 👍: ${l}`);
@@ -462,7 +460,7 @@ async function handleProfile(interaction) {
  * @returns {Promise<void>}
  */
 async function handleRanking(interaction) {
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  await interaction.deferReply({ ephemeral: true });
   const sub = interaction.options.getSubcommand();
   const pattern = sub === 'messages' ? 'msg_cnt:*' : 'like_cnt:*';
   const list = [];
@@ -508,7 +506,7 @@ client.on(Events.InteractionCreate, async (i) => {
               )
           )
         ],
-        flags: MessageFlags.Ephemeral
+        ephemeral: true
       });
     }
   }
@@ -538,7 +536,7 @@ client.on(Events.InteractionCreate, async (i) => {
 
     await i.update({ content: chunks[0], components: [] });
     for (let idx = 1; idx < chunks.length; idx++) {
-      await i.followUp({ content: chunks[idx], flags: MessageFlags.Ephemeral });
+      await i.followUp({ content: chunks[idx], ephemeral: true });
     }
     return;
   }
@@ -559,7 +557,7 @@ client.on(Events.InteractionCreate, async (i) => {
             .addOptions(langs.map(code => ({ label: code, value: code })))
         )
       ],
-      flags: MessageFlags.Ephemeral
+      ephemeral: true
     });
   }
   if (i.isStringSelectMenu() && i.customId === 'setting_lang') {
