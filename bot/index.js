@@ -233,6 +233,14 @@ async function handleSetup(interaction) {
       return interaction.editReply('❌ Need Administrator permission.');
     }
 
+    // Guard: prevent duplicate setup by checking existing category
+    const existingCategory = interaction.guild.channels.cache.find(
+      c => c.type === ChannelType.GuildCategory && c.name === 'Global-Chat Settings'
+    );
+    if (existingCategory) {
+      return interaction.editReply('⚠️ Setup has already been run.');
+    }
+
     /* (2) “Global Chat” カテゴリ */
     const category = await interaction.guild.channels.create({
       name: 'Global Chat',
