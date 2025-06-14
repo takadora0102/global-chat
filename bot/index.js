@@ -233,9 +233,9 @@ async function handleSetup(interaction) {
       return interaction.editReply('❌ Need Administrator permission.');
     }
 
-    /* (2) “Global Chat” カテゴリ */
+    /* (2) “Global-Chat Settings” カテゴリ */
     const category = await interaction.guild.channels.create({
-      name: 'Global Chat',
+      name: 'Global-Chat Settings',
       type: ChannelType.GuildCategory
     });
 
