@@ -27,7 +27,7 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import { randomUUID } from 'crypto';
 import { Redis } from '@upstash/redis';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import {
   FLAG_TO_LANG,
   REGIONS,
@@ -88,7 +88,7 @@ async function checkGeminiConnection() {
 checkGeminiConnection();
 
 const genAI = process.env.GEMINI_API_KEY
-  ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
   : null;
 
 /* ────────── 1. Redis & Client 初期化 ────────── */
